@@ -9,10 +9,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr).await?;
 
-    println!("==================================================");
-    println!("  Pouse PC Client Server Listening on Port {}", port);
-    println!("  Local WebSocket Address: ws://<YOUR_PC_IP>:{}", port);
-    println!("==================================================");
+    crate::pairing::print_pairing_info(port);
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
         println!("New connection from: {}", peer_addr);

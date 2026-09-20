@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'pairing_payload.dart';
+import 'qr_scanner_screen.dart';
 import 'websocket_service.dart';
 
 class TouchpadScreen extends StatefulWidget {
@@ -50,6 +52,28 @@ class _TouchpadScreenState extends State<TouchpadScreen> {
   Future<void> _saveIp(String ip) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('pouse_pc_ip', ip);
+  }
+
+  Future<void> _openQrScanner() async {
+    final payload = await Navigator.of(context).push<PairingPayload>(
+      MaterialPageRoute(builder: (context) => const QrScannerScreen()),
+    );
+
+    if (payload != null && mounted) {
+      _ipController.text = payload.host;
+      await _saveIp(payload.host);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Paired with ${payload.name} (${payload.host}:${payload.port})'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+      _wsService.connect(payload.host, port: payload.port);
+    }
   }
 
   void _toggleConnection() {
@@ -146,6 +170,11 @@ class _TouchpadScreenState extends State<TouchpadScreen> {
                         borderSide: BorderSide.none,
                       ),
                       prefixIcon: const Icon(Icons.wifi, color: Colors.blueAccent, size: 18),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.qr_code_scanner, color: Colors.blueAccent, size: 20),
+                        onPressed: _openQrScanner,
+                        tooltip: 'Scan PC QR Code',
+                      ),
                     ),
                   ),
                 ),

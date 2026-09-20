@@ -1,4 +1,5 @@
 mod input;
+mod pairing;
 mod protocol;
 mod server;
 
