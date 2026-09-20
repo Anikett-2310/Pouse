@@ -1,0 +1,1 @@
+C:\dev\Pouse\pc-client\target\debug\pc-client.exe: C:\dev\Pouse\pc-client\src\input.rs C:\dev\Pouse\pc-client\src\main.rs C:\dev\Pouse\pc-client\src\protocol.rs C:\dev\Pouse\pc-client\src\server.rs
