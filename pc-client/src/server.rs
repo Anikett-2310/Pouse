@@ -25,6 +25,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn handle_connection(stream: TcpStream, peer_addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    stream.set_nodelay(true)?;
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     println!("WebSocket handshake completed with {}", peer_addr);
 
@@ -40,7 +41,9 @@ async fn handle_connection(stream: TcpStream, peer_addr: SocketAddr) -> Result<(
                             let pong = serde_json::json!({ "event": "PONG" }).to_string();
                             let _ = ws_sender.send(Message::Text(pong.into())).await;
                         } else {
-                            println!("[{}] Processing event: {:?}", peer_addr, event);
+                            if !matches!(event, PouseEvent::Move { .. }) {
+                                println!("[{}] Processing event: {:?}", peer_addr, event);
+                            }
                             input_handler.handle_event(event);
                         }
                     }

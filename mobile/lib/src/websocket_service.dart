@@ -84,13 +84,34 @@ class WebSocketService {
     }
   }
 
+  double _pendingMoveDx = 0.0;
+  double _pendingMoveDy = 0.0;
+  bool _isMoveScheduled = false;
+
   void sendMove(double dx, double dy) {
-    debugPrint('[MOVE SENT] dx: $dx, dy: $dy');
-    sendEvent({
-      'event': 'MOVE',
-      'dx': dx,
-      'dy': dy,
-    });
+    _pendingMoveDx += dx;
+    _pendingMoveDy += dy;
+
+    if (!_isMoveScheduled) {
+      _isMoveScheduled = true;
+      scheduleMicrotask(_flushMove);
+    }
+  }
+
+  void _flushMove() {
+    _isMoveScheduled = false;
+    final dx = _pendingMoveDx;
+    final dy = _pendingMoveDy;
+    _pendingMoveDx = 0.0;
+    _pendingMoveDy = 0.0;
+
+    if (dx != 0 || dy != 0) {
+      sendEvent({
+        'event': 'MOVE',
+        'dx': dx,
+        'dy': dy,
+      });
+    }
   }
 
   void sendLeftClick() {
@@ -139,6 +160,52 @@ class WebSocketService {
       'event': 'KEY_PRESS',
       'key': key,
     });
+  }
+
+  void sendKeyDown(String key) {
+    sendEvent({
+      'event': 'KEY_DOWN',
+      'key': key,
+    });
+  }
+
+  void sendKeyUp(String key) {
+    sendEvent({
+      'event': 'KEY_UP',
+      'key': key,
+    });
+  }
+
+  void sendTwoFingerBrowserBack() {
+    sendEvent({'event': 'TWO_FINGER_BROWSER_BACK'});
+  }
+
+  void sendTwoFingerBrowserForward() {
+    sendEvent({'event': 'TWO_FINGER_BROWSER_FORWARD'});
+  }
+
+  void sendThreeFingerUp() {
+    sendEvent({'event': 'THREE_FINGER_UP'});
+  }
+
+  void sendThreeFingerDown() {
+    sendEvent({'event': 'THREE_FINGER_DOWN'});
+  }
+
+  void sendThreeFingerLeft() {
+    sendEvent({'event': 'THREE_FINGER_LEFT'});
+  }
+
+  void sendThreeFingerRight() {
+    sendEvent({'event': 'THREE_FINGER_RIGHT'});
+  }
+
+  void sendFourFingerLeft() {
+    sendEvent({'event': 'FOUR_FINGER_LEFT'});
+  }
+
+  void sendFourFingerRight() {
+    sendEvent({'event': 'FOUR_FINGER_RIGHT'});
   }
 
   void _handleIncomingMessage(dynamic message) {
