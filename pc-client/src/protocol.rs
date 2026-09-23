@@ -32,6 +32,20 @@ pub enum PouseEvent {
     KeyPress {
         key: String,
     },
+    KeyDown {
+        key: String,
+    },
+    KeyUp {
+        key: String,
+    },
+    TwoFingerBrowserBack,
+    TwoFingerBrowserForward,
+    ThreeFingerUp,
+    ThreeFingerDown,
+    ThreeFingerLeft,
+    ThreeFingerRight,
+    FourFingerLeft,
+    FourFingerRight,
     Ping,
     Pong,
 }
@@ -88,5 +102,47 @@ mod tests {
             PouseEvent::TextInput { text } => assert_eq!(text, "hello"),
             _ => panic!("Expected TextInput event"),
         }
+    }
+
+    #[test]
+    fn test_parse_gestures_and_key_hold() {
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"TWO_FINGER_BROWSER_BACK"}"#).unwrap(),
+            PouseEvent::TwoFingerBrowserBack
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"TWO_FINGER_BROWSER_FORWARD"}"#).unwrap(),
+            PouseEvent::TwoFingerBrowserForward
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"THREE_FINGER_UP"}"#).unwrap(),
+            PouseEvent::ThreeFingerUp
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"THREE_FINGER_DOWN"}"#).unwrap(),
+            PouseEvent::ThreeFingerDown
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"THREE_FINGER_LEFT"}"#).unwrap(),
+            PouseEvent::ThreeFingerLeft
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"THREE_FINGER_RIGHT"}"#).unwrap(),
+            PouseEvent::ThreeFingerRight
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"FOUR_FINGER_LEFT"}"#).unwrap(),
+            PouseEvent::FourFingerLeft
+        );
+        assert_eq!(
+            PouseEvent::parse(r#"{"event":"FOUR_FINGER_RIGHT"}"#).unwrap(),
+            PouseEvent::FourFingerRight
+        );
+
+        let kd = PouseEvent::parse(r#"{"event":"KEY_DOWN","key":"w"}"#).unwrap();
+        assert_eq!(kd, PouseEvent::KeyDown { key: "w".to_string() });
+
+        let ku = PouseEvent::parse(r#"{"event":"KEY_UP","key":"w"}"#).unwrap();
+        assert_eq!(ku, PouseEvent::KeyUp { key: "w".to_string() });
     }
 }

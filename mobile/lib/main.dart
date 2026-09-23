@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'src/touchpad_screen.dart';
+import 'src/main_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +21,7 @@ class PouseApp extends StatelessWidget {
           surface: Color(0xFF1E1E24),
         ),
       ),
-      home: const TouchpadScreen(),
+      home: const MainScreen(),
     );
   }
 }
