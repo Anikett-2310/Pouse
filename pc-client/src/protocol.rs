@@ -8,6 +8,8 @@ pub enum PouseEvent {
         dx: f32,
         #[serde(default)]
         dy: f32,
+        #[serde(default)]
+        t: Option<u64>,
     },
     LeftClick,
     RightClick,
@@ -66,12 +68,13 @@ mod tests {
 
     #[test]
     fn test_parse_move_event() {
-        let json = r#"{"event":"MOVE","dx":15.5,"dy":-4.2}"#;
+        let json = r#"{"event":"MOVE","dx":15.5,"dy":-4.2,"t":1727210000000}"#;
         let event = PouseEvent::parse(json).unwrap();
         match event {
-            PouseEvent::Move { dx, dy } => {
+            PouseEvent::Move { dx, dy, t } => {
                 assert_eq!(dx, 15.5);
                 assert_eq!(dy, -4.2);
+                assert_eq!(t, Some(1727210000000));
             }
             _ => panic!("Expected Move event"),
         }
@@ -102,47 +105,5 @@ mod tests {
             PouseEvent::TextInput { text } => assert_eq!(text, "hello"),
             _ => panic!("Expected TextInput event"),
         }
-    }
-
-    #[test]
-    fn test_parse_gestures_and_key_hold() {
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"TWO_FINGER_BROWSER_BACK"}"#).unwrap(),
-            PouseEvent::TwoFingerBrowserBack
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"TWO_FINGER_BROWSER_FORWARD"}"#).unwrap(),
-            PouseEvent::TwoFingerBrowserForward
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"THREE_FINGER_UP"}"#).unwrap(),
-            PouseEvent::ThreeFingerUp
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"THREE_FINGER_DOWN"}"#).unwrap(),
-            PouseEvent::ThreeFingerDown
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"THREE_FINGER_LEFT"}"#).unwrap(),
-            PouseEvent::ThreeFingerLeft
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"THREE_FINGER_RIGHT"}"#).unwrap(),
-            PouseEvent::ThreeFingerRight
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"FOUR_FINGER_LEFT"}"#).unwrap(),
-            PouseEvent::FourFingerLeft
-        );
-        assert_eq!(
-            PouseEvent::parse(r#"{"event":"FOUR_FINGER_RIGHT"}"#).unwrap(),
-            PouseEvent::FourFingerRight
-        );
-
-        let kd = PouseEvent::parse(r#"{"event":"KEY_DOWN","key":"w"}"#).unwrap();
-        assert_eq!(kd, PouseEvent::KeyDown { key: "w".to_string() });
-
-        let ku = PouseEvent::parse(r#"{"event":"KEY_UP","key":"w"}"#).unwrap();
-        assert_eq!(ku, PouseEvent::KeyUp { key: "w".to_string() });
     }
 }

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 import 'shared_keyboard_panel.dart';
 import 'shared_gaming_panel.dart';
 import 'shared_os_actions_panel.dart';
@@ -11,14 +11,14 @@ enum ActiveUtilityPanel { none, keyboard, gaming, osActions }
 /// Houses the Left Click button, Right Click button, and central "⋯" (Ellipsis) Utilities button.
 /// Tapping "⋯" expands a compact secondary toolbar with Keyboard (⌨), Gaming (🎮), and OS Actions (🖥) icons.
 class SharedUtilitiesDock extends StatefulWidget {
-  final WebSocketService wsService;
+  final PouseTransport transport;
   final VoidCallback onLeftClick;
   final VoidCallback onRightClick;
   final ValueChanged<bool>? onPanelStateChanged;
 
   const SharedUtilitiesDock({
     super.key,
-    required this.wsService,
+    required this.transport,
     required this.onLeftClick,
     required this.onRightClick,
     this.onPanelStateChanged,
@@ -66,11 +66,11 @@ class _SharedUtilitiesDockState extends State<SharedUtilitiesDock> {
       children: [
         // Active Panel View (Keyboard, Gaming, or OS Actions)
         if (_activePanel == ActiveUtilityPanel.keyboard)
-          SharedKeyboardPanel(wsService: widget.wsService)
+          SharedKeyboardPanel(transport: widget.transport)
         else if (_activePanel == ActiveUtilityPanel.gaming)
-          SharedGamingPanel(wsService: widget.wsService)
+          SharedGamingPanel(transport: widget.transport)
         else if (_activePanel == ActiveUtilityPanel.osActions)
-          SharedOsActionsPanel(wsService: widget.wsService),
+          SharedOsActionsPanel(transport: widget.transport),
 
         // Secondary Expanded Utilities Toolbar (⌨ 🎮 🖥)
         if (_isToolbarExpanded)

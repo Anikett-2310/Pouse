@@ -15,7 +15,7 @@ void main() {
       expect(service.status, ConnectionStatus.disconnected);
 
       // Verify status transitions
-      final connectFuture = service.connect('127.0.0.1', port: 8081);
+      final connectFuture = service.connect('192.0.2.1', port: 8081);
       expect(service.status, ConnectionStatus.connecting);
 
       await connectFuture; // Will fail/timeout or error cleanly

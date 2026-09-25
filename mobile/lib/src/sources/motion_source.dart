@@ -5,7 +5,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../input_source.dart';
 import '../mouse_mode_manager.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 
 /// Concrete [InputSource] for V2 Motion Mouse (Air Mouse).
 ///
@@ -16,9 +16,14 @@ class MotionSource extends ChangeNotifier implements InputSource {
   static const String prefSensitivityKey = 'pouse_motion_sensitivity';
   static const double defaultSensitivity = 20.0; // px / degree
 
-  final WebSocketService _wsService;
+  PouseTransport _transport;
 
-  WebSocketService get wsService => _wsService;
+  PouseTransport get transport => _transport;
+
+  void setTransport(PouseTransport transport) {
+    _transport = transport;
+    notifyListeners();
+  }
 
   bool _isActive = false;
   bool _isTracking = false;
@@ -41,7 +46,7 @@ class MotionSource extends ChangeNotifier implements InputSource {
   final Stream<GyroscopeEvent>? _customGyroStream;
 
   MotionSource(
-    this._wsService, {
+    this._transport, {
     Stream<AccelerometerEvent>? accelStream,
     Stream<GyroscopeEvent>? gyroStream,
   })  : _customAccelStream = accelStream,
@@ -268,7 +273,7 @@ class MotionSource extends ChangeNotifier implements InputSource {
     final clampedDy = dy.clamp(-150.0, 150.0);
 
     if (clampedDx.abs() >= 0.1 || clampedDy.abs() >= 0.1) {
-      _wsService.sendMove(clampedDx, clampedDy);
+      _transport.sendMove(clampedDx, clampedDy);
     }
   }
 
@@ -284,16 +289,16 @@ class MotionSource extends ChangeNotifier implements InputSource {
 
   /// Sends a left click event to the PC.
   void sendLeftClick() {
-    _wsService.sendLeftClick();
+    _transport.sendLeftClick();
   }
 
   /// Sends a right click event to the PC.
   void sendRightClick() {
-    _wsService.sendRightClick();
+    _transport.sendRightClick();
   }
 
   /// Sends a double click event to the PC.
   void sendDoubleClick() {
-    _wsService.sendDoubleClick();
+    _transport.sendDoubleClick();
   }
 }

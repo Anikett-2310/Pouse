@@ -1,0 +1,11 @@
+# Rust build artifacts
+/pc-client/target/
+**/target/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+
+# Stray temporary files
+/e

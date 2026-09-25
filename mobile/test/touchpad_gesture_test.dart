@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/src/sources/touchpad_source.dart';
 import 'package:mobile/src/views/touchpad_view.dart';

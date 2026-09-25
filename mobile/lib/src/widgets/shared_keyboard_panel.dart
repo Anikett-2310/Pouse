@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 
 /// Reusable soft keyboard panel widget shared across Pouse mouse modes.
 ///
@@ -8,11 +8,11 @@ import '../websocket_service.dart';
 /// handling, hardware key event interception (Esc),
 /// and quick action buttons.
 class SharedKeyboardPanel extends StatefulWidget {
-  final WebSocketService wsService;
+  final PouseTransport transport;
 
   const SharedKeyboardPanel({
     super.key,
-    required this.wsService,
+    required this.transport,
   });
 
   @override
@@ -61,13 +61,13 @@ class _SharedKeyboardPanelState extends State<SharedKeyboardPanel> {
     // Determine how many characters were deleted from _lastText
     final backspaceCount = _lastText.length - prefixLen;
     for (int i = 0; i < backspaceCount; i++) {
-      widget.wsService.sendKeyPress('backspace');
+      widget.transport.sendKeyPress('backspace');
     }
 
     // Determine inserted text
     if (text.length > prefixLen) {
       final inserted = text.substring(prefixLen);
-      widget.wsService.sendTextInput(inserted);
+      widget.transport.sendTextInput(inserted);
     }
 
     _lastText = text;
@@ -86,7 +86,7 @@ class _SharedKeyboardPanelState extends State<SharedKeyboardPanel> {
               onKeyEvent: (KeyEvent event) {
                 if (event is KeyDownEvent) {
                   if (event.logicalKey == LogicalKeyboardKey.escape) {
-                    widget.wsService.sendKeyPress('escape');
+                    widget.transport.sendKeyPress('escape');
                   }
                 }
               },
@@ -119,7 +119,7 @@ class _SharedKeyboardPanelState extends State<SharedKeyboardPanel> {
           ElevatedButton(
             onPressed: () {
               HapticFeedback.lightImpact();
-              widget.wsService.sendKeyPress('escape');
+              widget.transport.sendKeyPress('escape');
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF2A2A36),
@@ -134,7 +134,7 @@ class _SharedKeyboardPanelState extends State<SharedKeyboardPanel> {
           ElevatedButton.icon(
             onPressed: () {
               HapticFeedback.lightImpact();
-              widget.wsService.sendKeyPress('enter');
+              widget.transport.sendKeyPress('enter');
             },
             icon: const Icon(Icons.keyboard_return, size: 16),
             label: const Text('Enter', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),

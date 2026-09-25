@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../sources/motion_source.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 import '../widgets/shared_utilities_dock.dart';
 
 /// Flutter UI view for V2 Motion Mouse (Air Mouse).
@@ -34,7 +34,7 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
   Offset? _scrollLastPos;
   bool _isScrolling = false;
 
-  WebSocketService get _wsService => widget.source.wsService;
+  PouseTransport get _transport => widget.source.transport;
 
   bool _isUtilityPanelActive = false;
 
@@ -123,7 +123,7 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
       final dx = delta.dx * 0.5 * _scrollSensitivity * dirMultiplier;
       final dy = delta.dy * 0.5 * _scrollSensitivity * dirMultiplier;
       if (dx.abs() > 0.01 || dy.abs() > 0.01) {
-        _wsService.sendScroll(dx, dy);
+        _transport.sendScroll(dx, dy);
       }
     }
     _scrollLastPos = pos;
@@ -439,7 +439,7 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
 
             // Common Action Button Dock (LEFT CLICK   ⋯   RIGHT CLICK)
             SharedUtilitiesDock(
-              wsService: _wsService,
+              transport: _transport,
               onPanelStateChanged: (isActive) {
                 setState(() => _isUtilityPanelActive = isActive);
               },

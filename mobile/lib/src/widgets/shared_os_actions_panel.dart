@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 
 /// Shared OS Actions Panel providing 1-tap fallback access to Windows OS actions:
 /// Task View, Show Desktop, Previous App, Next App, Previous Virtual Desktop, and Next Virtual Desktop.
 class SharedOsActionsPanel extends StatelessWidget {
-  final WebSocketService wsService;
+  final PouseTransport transport;
 
   const SharedOsActionsPanel({
     super.key,
-    required this.wsService,
+    required this.transport,
   });
 
   Widget _buildActionButton({
@@ -69,13 +69,13 @@ class SharedOsActionsPanel extends StatelessWidget {
               _buildActionButton(
                 label: 'Task View',
                 icon: Icons.window_outlined,
-                onTap: () => wsService.sendThreeFingerUp(),
+                onTap: () => transport.sendThreeFingerUp(),
               ),
               const SizedBox(width: 8),
               _buildActionButton(
                 label: 'Show Desktop',
                 icon: Icons.desktop_windows_outlined,
-                onTap: () => wsService.sendThreeFingerDown(),
+                onTap: () => transport.sendThreeFingerDown(),
               ),
             ],
           ),
@@ -85,13 +85,13 @@ class SharedOsActionsPanel extends StatelessWidget {
               _buildActionButton(
                 label: 'Previous App',
                 icon: Icons.arrow_back_outlined,
-                onTap: () => wsService.sendThreeFingerLeft(),
+                onTap: () => transport.sendThreeFingerLeft(),
               ),
               const SizedBox(width: 8),
               _buildActionButton(
                 label: 'Next App',
                 icon: Icons.arrow_forward_outlined,
-                onTap: () => wsService.sendThreeFingerRight(),
+                onTap: () => transport.sendThreeFingerRight(),
               ),
             ],
           ),
@@ -101,13 +101,13 @@ class SharedOsActionsPanel extends StatelessWidget {
               _buildActionButton(
                 label: 'Prev Desktop',
                 icon: Icons.fast_rewind_outlined,
-                onTap: () => wsService.sendFourFingerLeft(),
+                onTap: () => transport.sendFourFingerLeft(),
               ),
               const SizedBox(width: 8),
               _buildActionButton(
                 label: 'Next Desktop',
                 icon: Icons.fast_forward_outlined,
-                onTap: () => wsService.sendFourFingerRight(),
+                onTap: () => transport.sendFourFingerRight(),
               ),
             ],
           ),

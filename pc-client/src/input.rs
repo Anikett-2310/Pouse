@@ -25,13 +25,19 @@ pub trait InputDriver {
 
 pub struct EnigoDriver {
     enigo: Enigo,
+    move_count: u64,
+    last_log: std::time::Instant,
 }
 
 impl EnigoDriver {
     pub fn new() -> Result<Self, String> {
         let enigo = Enigo::new(&Settings::default())
             .map_err(|e| format!("Failed to initialize Enigo input handler: {:?}", e))?;
-        Ok(Self { enigo })
+        Ok(Self {
+            enigo,
+            move_count: 0,
+            last_log: std::time::Instant::now(),
+        })
     }
 }
 
@@ -49,6 +55,11 @@ impl InputDriver for EnigoDriver {
     }
 
     fn move_mouse(&mut self, x: i32, y: i32) {
+        self.move_count += 1;
+        if self.last_log.elapsed().as_secs() >= 1 || self.move_count % 100 == 0 {
+            println!("[ENIGO DIAGNOSTIC] move_mouse executed: count={} | dx={} | dy={}", self.move_count, x, y);
+            self.last_log = std::time::Instant::now();
+        }
         let _ = self.enigo.move_mouse(x, y, Coordinate::Rel);
     }
 
@@ -226,7 +237,7 @@ impl<D: InputDriver> InputHandler<D> {
 
     pub fn handle_event(&mut self, event: PouseEvent) {
         match event {
-            PouseEvent::Move { dx, dy } => {
+            PouseEvent::Move { dx, dy, .. } => {
                 self.accum_x += dx;
                 self.accum_y += dy;
 
@@ -265,10 +276,16 @@ impl<D: InputDriver> InputHandler<D> {
             PouseEvent::ButtonUp { button } => {
                 let b = match button.as_str() {
                     "right" => {
+                        if !self.right_button_down {
+                            return;
+                        }
                         self.right_button_down = false;
                         Button::Right
                     }
                     _ => {
+                        if !self.left_button_down {
+                            return;
+                        }
                         self.left_button_down = false;
                         Button::Left
                     }
@@ -541,7 +558,7 @@ mod tests {
         // Perform standard clicks and movements
         handler.handle_event(PouseEvent::LeftClick);
         handler.handle_event(PouseEvent::RightClick);
-        handler.handle_event(PouseEvent::Move { dx: 15.0, dy: 5.0 });
+        handler.handle_event(PouseEvent::Move { dx: 15.0, dy: 5.0, t: None });
 
         // Simulate connection teardown
         handler.release_all();

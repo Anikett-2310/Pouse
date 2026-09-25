@@ -12,7 +12,7 @@ void main() {
       expect(source.mode, MouseMode.touchpad);
       expect(source.displayName, 'Touchpad');
       expect(source.isActive, isFalse);
-      expect(source.wsService, wsService);
+      expect(source.transport, wsService);
     });
 
     test('activation lifecycle callbacks toggle isActive', () {

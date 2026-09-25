@@ -593,7 +593,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SharedKeyboardPanel(wsService: mockWs),
+            body: SharedKeyboardPanel(transport: mockWs),
           ),
         ),
       );

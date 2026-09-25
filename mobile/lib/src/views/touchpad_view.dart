@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../sources/touchpad_source.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 import '../widgets/shared_utilities_dock.dart';
 
 /// Touchpad gesture state tracking to guarantee mutually exclusive gesture outcomes.
@@ -69,7 +69,7 @@ class _TouchpadViewState extends State<TouchpadView> {
   Offset? _lastTapUpPosition;
   Timer? _singleTapTimer;
 
-  WebSocketService get _wsService => widget.source.wsService;
+  PouseTransport get _transport => widget.source.transport;
 
   @override
   void initState() {
@@ -133,7 +133,7 @@ class _TouchpadViewState extends State<TouchpadView> {
       _singleTapTimer?.cancel();
       _singleTapTimer = null;
       if (_gestureState == TouchpadGestureState.doubleTapDragging) {
-        _wsService.sendButtonUp('left');
+        _transport.sendButtonUp('left');
       }
 
       final focalX = _pointerPositions.values.map((p) => p.dx).reduce((a, b) => a + b) / _pointerPositions.length;
@@ -196,23 +196,23 @@ class _TouchpadViewState extends State<TouchpadView> {
           if (_maxPointerCount == 3) {
             if (isHorizontal) {
               if (focalDelta.dx < 0) {
-                _wsService.sendThreeFingerLeft();
+                _transport.sendThreeFingerLeft();
               } else {
-                _wsService.sendThreeFingerRight();
+                _transport.sendThreeFingerRight();
               }
             } else {
               if (focalDelta.dy < 0) {
-                _wsService.sendThreeFingerUp();
+                _transport.sendThreeFingerUp();
               } else {
-                _wsService.sendThreeFingerDown();
+                _transport.sendThreeFingerDown();
               }
             }
           } else if (_maxPointerCount >= 4) {
             if (isHorizontal) {
               if (focalDelta.dx < 0) {
-                _wsService.sendFourFingerLeft();
+                _transport.sendFourFingerLeft();
               } else {
-                _wsService.sendFourFingerRight();
+                _transport.sendFourFingerRight();
               }
             }
           }
@@ -233,17 +233,17 @@ class _TouchpadViewState extends State<TouchpadView> {
         final dx = delta.dx * _sensitivity;
         final dy = delta.dy * _sensitivity;
         if (dx != 0 || dy != 0) {
-          _wsService.sendMove(dx, dy);
+          _transport.sendMove(dx, dy);
         }
       } else if (_gestureState == TouchpadGestureState.potentialDoubleTapDrag) {
         if (_primaryDownPos != null && (pos - _primaryDownPos!).distance > 3.0) {
           _gestureState = TouchpadGestureState.doubleTapDragging;
-          _wsService.sendButtonDown('left');
+          _transport.sendButtonDown('left');
           HapticFeedback.mediumImpact();
           final dx = delta.dx * _sensitivity;
           final dy = delta.dy * _sensitivity;
           if (dx != 0 || dy != 0) {
-            _wsService.sendMove(dx, dy);
+            _transport.sendMove(dx, dy);
           }
         }
       } else if (_gestureState == TouchpadGestureState.doubleTapDragging) {
@@ -251,7 +251,7 @@ class _TouchpadViewState extends State<TouchpadView> {
         final dx = delta.dx * _sensitivity;
         final dy = delta.dy * _sensitivity;
         if (dx != 0 || dy != 0) {
-          _wsService.sendMove(dx, dy);
+          _transport.sendMove(dx, dy);
         }
       }
     } else if (_maxPointerCount == 2 && _pointerCount == 2) {
@@ -281,10 +281,10 @@ class _TouchpadViewState extends State<TouchpadView> {
 
               if (focalDelta.dx < 0) {
                 // Swipe Left -> Browser Forward
-                _wsService.sendTwoFingerBrowserForward();
+                _transport.sendTwoFingerBrowserForward();
               } else {
                 // Swipe Right -> Browser Back
-                _wsService.sendTwoFingerBrowserBack();
+                _transport.sendTwoFingerBrowserBack();
               }
             } else if (!isHorizontal) {
               _gestureState = TouchpadGestureState.twoFingerScrolling;
@@ -301,7 +301,7 @@ class _TouchpadViewState extends State<TouchpadView> {
         final dx = delta.dx * 0.5 * _scrollSensitivity * dirMultiplier;
         final dy = delta.dy * 0.5 * _scrollSensitivity * dirMultiplier;
         if (dx.abs() > 0.1 || dy.abs() > 0.1) {
-          _wsService.sendScroll(dx, dy);
+          _transport.sendScroll(dx, dy);
         }
       }
     }
@@ -328,12 +328,12 @@ class _TouchpadViewState extends State<TouchpadView> {
     }
 
     if (_gestureState == TouchpadGestureState.doubleTapDragging) {
-      _wsService.sendButtonUp('left');
+      _transport.sendButtonUp('left');
       _gestureState = TouchpadGestureState.idle;
       _lastTapUpTime = null;
       _lastTapUpPosition = null;
     } else if (_gestureState == TouchpadGestureState.potentialDoubleTapDrag) {
-      _wsService.sendDoubleClick();
+      _transport.sendDoubleClick();
       _gestureState = TouchpadGestureState.idle;
       _lastTapUpTime = null;
       _lastTapUpPosition = null;
@@ -344,7 +344,7 @@ class _TouchpadViewState extends State<TouchpadView> {
       _singleTapTimer?.cancel();
       _singleTapTimer = Timer(const Duration(milliseconds: 250), () {
         if (_lastTapUpTime == now) {
-          _wsService.sendLeftClick();
+          _transport.sendLeftClick();
           _lastTapUpTime = null;
           _lastTapUpPosition = null;
         }
@@ -358,7 +358,7 @@ class _TouchpadViewState extends State<TouchpadView> {
         _maxPointerCount == 2 &&
         _pointerCount == 0) {
       // Trigger Right Click only when both fingers are released without exceeding touch slop
-      _wsService.sendRightClick();
+      _transport.sendRightClick();
       _gestureState = TouchpadGestureState.idle;
     }
 
@@ -376,7 +376,7 @@ class _TouchpadViewState extends State<TouchpadView> {
   void _onPointerCancel(PointerCancelEvent event) {
     _pointerPositions.remove(event.pointer);
     if (_gestureState == TouchpadGestureState.doubleTapDragging) {
-      _wsService.sendButtonUp('left');
+      _transport.sendButtonUp('left');
     }
 
     if (_maxPointerCount >= 3 && !_gestureTriggered && !_hasShownOemGestureHint && mounted) {
@@ -555,9 +555,9 @@ class _TouchpadViewState extends State<TouchpadView> {
 
         // Unified Utilities Dock (LEFT CLICK   ⋯   RIGHT CLICK)
         SharedUtilitiesDock(
-          wsService: _wsService,
-          onLeftClick: () => _wsService.sendLeftClick(),
-          onRightClick: () => _wsService.sendRightClick(),
+          transport: _transport,
+          onLeftClick: () => _transport.sendLeftClick(),
+          onRightClick: () => _transport.sendRightClick(),
         ),
       ],
     );

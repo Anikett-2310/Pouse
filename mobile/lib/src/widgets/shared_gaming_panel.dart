@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 
 enum GamingMode { arrow, wasd }
 
@@ -11,11 +11,11 @@ enum GamingMode { arrow, wasd }
 /// press-and-hold (KEY_DOWN / KEY_UP) semantics for presentation navigation and gaming.
 /// Persists the selected mode (Arrow vs WASD) across sessions.
 class SharedGamingPanel extends StatefulWidget {
-  final WebSocketService wsService;
+  final PouseTransport transport;
 
   const SharedGamingPanel({
     super.key,
-    required this.wsService,
+    required this.transport,
   });
 
   @override
@@ -59,20 +59,20 @@ class _SharedGamingPanelState extends State<SharedGamingPanel> {
     if (!_activeHeldKeys.contains(key)) {
       _activeHeldKeys.add(key);
       HapticFeedback.selectionClick();
-      widget.wsService.sendKeyDown(key);
+      widget.transport.sendKeyDown(key);
     }
   }
 
   void _onKeyTouchUp(String key) {
     if (_activeHeldKeys.contains(key)) {
       _activeHeldKeys.remove(key);
-      widget.wsService.sendKeyUp(key);
+      widget.transport.sendKeyUp(key);
     }
   }
 
   void _releaseAllHeldKeys() {
     for (final key in _activeHeldKeys.toList()) {
-      widget.wsService.sendKeyUp(key);
+      widget.transport.sendKeyUp(key);
     }
     _activeHeldKeys.clear();
   }

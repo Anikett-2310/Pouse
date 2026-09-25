@@ -1,16 +1,20 @@
 import '../input_source.dart';
 import '../mouse_mode_manager.dart';
-import '../websocket_service.dart';
+import '../transports/pouse_transport.dart';
 
 /// Touchpad input source implementation for V1.1 Unified Architecture.
 ///
 /// Manages the activation lifecycle and state for Touchpad mode.
-/// Delegates event dispatching to the shared [WebSocketService].
+/// Delegates event dispatching to the active [PouseTransport].
 class TouchpadSource implements InputSource {
-  final WebSocketService _wsService;
+  PouseTransport _transport;
   bool _isActive = false;
 
-  TouchpadSource(this._wsService);
+  TouchpadSource(this._transport);
+
+  void setTransport(PouseTransport transport) {
+    _transport = transport;
+  }
 
   @override
   MouseMode get mode => MouseMode.touchpad;
@@ -31,5 +35,5 @@ class TouchpadSource implements InputSource {
     _isActive = false;
   }
 
-  WebSocketService get wsService => _wsService;
+  PouseTransport get transport => _transport;
 }
