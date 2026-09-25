@@ -336,6 +336,22 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
               ),
             ),
 
+            // Common Action Button Dock (LEFT CLICK   ⋯   RIGHT CLICK)
+            SharedUtilitiesDock(
+              transport: _transport,
+              onPanelStateChanged: (isActive) {
+                setState(() => _isUtilityPanelActive = isActive);
+              },
+              onLeftClick: () {
+                HapticFeedback.lightImpact();
+                widget.source.sendLeftClick();
+              },
+              onRightClick: () {
+                HapticFeedback.lightImpact();
+                widget.source.sendRightClick();
+              },
+            ),
+
             // Motion Sensitivity Control Bar & Scroll Sensitivity Controls (Collapse when Utility panel active)
             if (!_isUtilityPanelActive) ...[
               Container(
@@ -436,22 +452,6 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
                 ),
               ),
             ],
-
-            // Common Action Button Dock (LEFT CLICK   ⋯   RIGHT CLICK)
-            SharedUtilitiesDock(
-              transport: _transport,
-              onPanelStateChanged: (isActive) {
-                setState(() => _isUtilityPanelActive = isActive);
-              },
-              onLeftClick: () {
-                HapticFeedback.lightImpact();
-                widget.source.sendLeftClick();
-              },
-              onRightClick: () {
-                HapticFeedback.lightImpact();
-                widget.source.sendRightClick();
-              },
-            ),
           ],
         );
       },

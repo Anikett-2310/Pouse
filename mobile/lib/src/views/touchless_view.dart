@@ -254,6 +254,18 @@ class _TouchlessViewState extends State<TouchlessView> with WidgetsBindingObserv
                   ),
                 ),
 
+                // Action Dock (LEFT CLICK   ⋯   RIGHT CLICK)
+                SharedUtilitiesDock(
+                  transport: widget.source.transport,
+                  onLeftClick: () => widget.source.transport.sendLeftClick(),
+                  onRightClick: () => widget.source.transport.sendRightClick(),
+                  onPanelStateChanged: (isActive) {
+                    setState(() {
+                      _isUtilityPanelActive = isActive;
+                    });
+                  },
+                ),
+
                 // Touchless Settings Controls (Collapses when Utility panel active)
                 if (!_isUtilityPanelActive) ...[
                   Container(
@@ -421,18 +433,6 @@ class _TouchlessViewState extends State<TouchlessView> with WidgetsBindingObserv
                     ),
                   ),
                 ],
-
-                // Action Dock (Keyboard, Gaming, OS Actions)
-                SharedUtilitiesDock(
-                  transport: widget.source.transport,
-                  onLeftClick: () => widget.source.transport.sendLeftClick(),
-                  onRightClick: () => widget.source.transport.sendRightClick(),
-                  onPanelStateChanged: (isActive) {
-                    setState(() {
-                      _isUtilityPanelActive = isActive;
-                    });
-                  },
-                ),
               ],
             );
           },

@@ -69,6 +69,8 @@ class _TouchpadViewState extends State<TouchpadView> {
   Offset? _lastTapUpPosition;
   Timer? _singleTapTimer;
 
+  bool _isUtilityPanelActive = false;
+
   PouseTransport get _transport => widget.source.transport;
 
   @override
@@ -465,100 +467,104 @@ class _TouchpadViewState extends State<TouchpadView> {
           ),
         ),
 
-        // Sliders Bar
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          color: const Color(0xFF1E1E24),
-          child: Column(
-            children: [
-              // Pointer Sensitivity Slider (0.2x to 6.0x)
-              Row(
-                children: [
-                  const Icon(Icons.speed, color: Colors.blueAccent, size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Pointer', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  Expanded(
-                    child: Slider(
-                      value: _sensitivity.clamp(0.2, 6.0),
-                      min: 0.2,
-                      max: 6.0,
-                      divisions: 58,
-                      activeColor: Colors.blueAccent,
-                      inactiveColor: Colors.grey[800],
-                      label: '${_sensitivity.toStringAsFixed(1)}x',
-                      onChanged: (val) {
-                        setState(() => _sensitivity = val);
-                      },
-                      onChangeEnd: (val) => _savePointerSensitivity(val),
-                    ),
-                  ),
-                  Text(
-                    '${_sensitivity.toStringAsFixed(1)}x',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                  ),
-                ],
-              ),
-
-              // Scroll Sensitivity & Direction Controls
-              Row(
-                children: [
-                  const Icon(Icons.swap_vert, color: Colors.cyanAccent, size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Scroll', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  Expanded(
-                    child: Slider(
-                      value: _scrollSensitivity,
-                      min: 0.2,
-                      max: 3.0,
-                      divisions: 28,
-                      activeColor: Colors.cyanAccent,
-                      inactiveColor: Colors.grey[800],
-                      label: '${_scrollSensitivity.toStringAsFixed(1)}x',
-                      onChanged: (val) {
-                        setState(() => _scrollSensitivity = val);
-                      },
-                      onChangeEnd: (val) => _saveScrollSensitivity(val),
-                    ),
-                  ),
-                  Text(
-                    '${_scrollSensitivity.toStringAsFixed(1)}x',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                  ),
-                  const SizedBox(width: 10),
-                  InkWell(
-                    onTap: () => _saveScrollNatural(!_isNaturalScroll),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2A36),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _isNaturalScroll ? Colors.cyanAccent.withValues(alpha: 0.5) : Colors.orangeAccent.withValues(alpha: 0.5),
-                        ),
-                      ),
-                      child: Text(
-                        _isNaturalScroll ? 'Natural' : 'Reverse',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: _isNaturalScroll ? Colors.cyanAccent : Colors.orangeAccent,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-
-        // Unified Utilities Dock (LEFT CLICK   ⋯   RIGHT CLICK)
+        // Click Control Dock (LEFT CLICK   ⋯   RIGHT CLICK)
         SharedUtilitiesDock(
           transport: _transport,
+          onPanelStateChanged: (isActive) {
+            setState(() => _isUtilityPanelActive = isActive);
+          },
           onLeftClick: () => _transport.sendLeftClick(),
           onRightClick: () => _transport.sendRightClick(),
         ),
+
+        // Sliders Bar (Pointer Sensitivity + Scroll Sensitivity & Reverse)
+        if (!_isUtilityPanelActive)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            color: const Color(0xFF1E1E24),
+            child: Column(
+              children: [
+                // Pointer Sensitivity Slider (0.2x to 6.0x)
+                Row(
+                  children: [
+                    const Icon(Icons.speed, color: Colors.blueAccent, size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Pointer', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    Expanded(
+                      child: Slider(
+                        value: _sensitivity.clamp(0.2, 6.0),
+                        min: 0.2,
+                        max: 6.0,
+                        divisions: 58,
+                        activeColor: Colors.blueAccent,
+                        inactiveColor: Colors.grey[800],
+                        label: '${_sensitivity.toStringAsFixed(1)}x',
+                        onChanged: (val) {
+                          setState(() => _sensitivity = val);
+                        },
+                        onChangeEnd: (val) => _savePointerSensitivity(val),
+                      ),
+                    ),
+                    Text(
+                      '${_sensitivity.toStringAsFixed(1)}x',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ],
+                ),
+
+                // Scroll Sensitivity & Direction Controls
+                Row(
+                  children: [
+                    const Icon(Icons.swap_vert, color: Colors.cyanAccent, size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Scroll', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    Expanded(
+                      child: Slider(
+                        value: _scrollSensitivity,
+                        min: 0.2,
+                        max: 3.0,
+                        divisions: 28,
+                        activeColor: Colors.cyanAccent,
+                        inactiveColor: Colors.grey[800],
+                        label: '${_scrollSensitivity.toStringAsFixed(1)}x',
+                        onChanged: (val) {
+                          setState(() => _scrollSensitivity = val);
+                        },
+                        onChangeEnd: (val) => _saveScrollSensitivity(val),
+                      ),
+                    ),
+                    Text(
+                      '${_scrollSensitivity.toStringAsFixed(1)}x',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                    const SizedBox(width: 10),
+                    InkWell(
+                      onTap: () => _saveScrollNatural(!_isNaturalScroll),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2A2A36),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _isNaturalScroll ? Colors.cyanAccent.withValues(alpha: 0.5) : Colors.orangeAccent.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Text(
+                          _isNaturalScroll ? 'Natural' : 'Reverse',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: _isNaturalScroll ? Colors.cyanAccent : Colors.orangeAccent,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
