@@ -42,6 +42,49 @@ impl EnigoDriver {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn send_windows_special_key(key: Key, direction: Direction) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+        VK_DOWN, VK_LEFT, VK_OEM_MINUS, VK_OEM_PLUS, VK_RIGHT, VK_UP, KEYBD_EVENT_FLAGS,
+    };
+
+    let (vk, is_extended) = match key {
+        Key::UpArrow => (VK_UP, true),
+        Key::DownArrow => (VK_DOWN, true),
+        Key::LeftArrow => (VK_LEFT, true),
+        Key::RightArrow => (VK_RIGHT, true),
+        Key::Unicode('+') | Key::Unicode('=') => (VK_OEM_PLUS, false),
+        Key::Unicode('-') => (VK_OEM_MINUS, false),
+        _ => return false,
+    };
+
+    let mut flags = if is_extended {
+        KEYEVENTF_EXTENDEDKEY
+    } else {
+        KEYBD_EVENT_FLAGS(0)
+    };
+    if matches!(direction, Direction::Release) {
+        flags |= KEYEVENTF_KEYUP;
+    }
+
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+
+    let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
+    sent == 1
+}
+
 impl InputDriver for EnigoDriver {
     fn press_button(&mut self, button: Button) {
         let _ = self.enigo.button(button, Direction::Press);
@@ -90,14 +133,27 @@ impl InputDriver for EnigoDriver {
     }
 
     fn key(&mut self, key: Key) {
+        #[cfg(target_os = "windows")]
+        if send_windows_special_key(key, Direction::Press) {
+            let _ = send_windows_special_key(key, Direction::Release);
+            return;
+        }
         let _ = self.enigo.key(key, Direction::Click);
     }
 
     fn press_key(&mut self, key: Key) {
+        #[cfg(target_os = "windows")]
+        if send_windows_special_key(key, Direction::Press) {
+            return;
+        }
         let _ = self.enigo.key(key, Direction::Press);
     }
 
     fn release_key(&mut self, key: Key) {
+        #[cfg(target_os = "windows")]
+        if send_windows_special_key(key, Direction::Release) {
+            return;
+        }
         let _ = self.enigo.key(key, Direction::Release);
     }
 
@@ -187,15 +243,21 @@ fn map_key_name(key: &str) -> Option<Key> {
         "a" => Some(Key::Unicode('a')),
         "s" => Some(Key::Unicode('s')),
         "d" => Some(Key::Unicode('d')),
-        "arrow_up" | "up" => Some(Key::UpArrow),
-        "arrow_down" | "down" => Some(Key::DownArrow),
-        "arrow_left" | "left" => Some(Key::LeftArrow),
-        "arrow_right" | "right" => Some(Key::RightArrow),
+        "arrow_up" | "up" | "arrowup" => Some(Key::UpArrow),
+        "arrow_down" | "down" | "arrowdown" => Some(Key::DownArrow),
+        "arrow_left" | "left" | "arrowleft" => Some(Key::LeftArrow),
+        "arrow_right" | "right" | "arrowright" => Some(Key::RightArrow),
         "enter" | "return" => Some(Key::Return),
         "backspace" => Some(Key::Backspace),
         "space" => Some(Key::Space),
         "tab" => Some(Key::Tab),
         "escape" => Some(Key::Escape),
+        "control" | "ctrl" => Some(Key::Control),
+        "alt" => Some(Key::Alt),
+        "shift" => Some(Key::Shift),
+        "meta" | "win" => Some(Key::Meta),
+        "plus" | "+" | "=" => Some(Key::Unicode('+')),
+        "minus" | "-" => Some(Key::Unicode('-')),
         s if s.chars().count() == 1 => Some(Key::Unicode(s.chars().next().unwrap())),
         _ => None,
     }
@@ -251,6 +313,7 @@ impl<D: InputDriver> InputHandler<D> {
                 self.driver.release_key(k);
             }
         }
+        crate::magnifier::MagnifierManager::global().reset();
     }
 
     pub fn handle_event(&mut self, event: PouseEvent) {
@@ -266,10 +329,15 @@ impl<D: InputDriver> InputHandler<D> {
                     self.accum_x -= ix as f32;
                     self.accum_y -= iy as f32;
                     self.driver.move_mouse(ix, iy);
+                    crate::magnifier::MagnifierManager::global().update_cursor();
                 }
             }
             PouseEvent::AbsMove { x, y } => {
                 self.driver.move_mouse_abs(x, y);
+                crate::magnifier::MagnifierManager::global().update_cursor();
+            }
+            PouseEvent::SystemMagnify { scale } => {
+                crate::magnifier::MagnifierManager::global().set_scale(scale);
             }
             PouseEvent::LeftClick => {
                 self.driver.click_button(Button::Left);
@@ -380,6 +448,7 @@ impl<D: InputDriver> InputHandler<D> {
             _ => {}
         }
     }
+
 }
 
 #[cfg(test)]
@@ -643,5 +712,31 @@ mod tests {
         assert!(handler.driver.released_keys.contains(&Key::Unicode('w')));
         assert!(handler.driver.released_keys.contains(&Key::UpArrow));
     }
+
+    #[test]
+    fn test_arrow_up_down_zoomed_scroll_hold_and_release() {
+        let mut handler = InputHandler::with_driver(TestDriver::default());
+
+        // Single tap or hold start: ArrowUp KeyDown
+        handler.handle_event(PouseEvent::KeyDown { key: "ArrowUp".to_string() });
+        assert!(handler.is_key_held("ArrowUp"));
+        assert_eq!(handler.driver.pressed_keys, vec![Key::UpArrow]);
+
+        // Release: ArrowUp KeyUp
+        handler.handle_event(PouseEvent::KeyUp { key: "ArrowUp".to_string() });
+        assert!(!handler.is_key_held("ArrowUp"));
+        assert_eq!(handler.driver.released_keys, vec![Key::UpArrow]);
+
+        // Single tap or hold start: ArrowDown KeyDown
+        handler.handle_event(PouseEvent::KeyDown { key: "ArrowDown".to_string() });
+        assert!(handler.is_key_held("ArrowDown"));
+        assert_eq!(handler.driver.pressed_keys, vec![Key::UpArrow, Key::DownArrow]);
+
+        // Release: ArrowDown KeyUp
+        handler.handle_event(PouseEvent::KeyUp { key: "ArrowDown".to_string() });
+        assert!(!handler.is_key_held("ArrowDown"));
+        assert_eq!(handler.driver.released_keys, vec![Key::UpArrow, Key::DownArrow]);
+    }
 }
+
 

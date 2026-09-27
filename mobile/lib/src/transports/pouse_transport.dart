@@ -39,5 +39,7 @@ abstract class PouseTransport {
   void sendFourFingerLeft();
   void sendFourFingerRight();
 
+  void sendSystemMagnify(double scale) {}
+
   void releaseAll();
 }

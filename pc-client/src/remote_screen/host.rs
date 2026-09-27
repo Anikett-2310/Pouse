@@ -1,9 +1,15 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+static LAST_WGC_FRAME_TIME_MS: AtomicU64 = AtomicU64::new(0);
+static LAST_ENCODED_FRAME_TIME_MS: AtomicU64 = AtomicU64::new(0);
+static LAST_WS_SEND_TIME_MS: AtomicU64 = AtomicU64::new(0);
+static KEYFRAME_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+static LAST_REQUESTED_KEYFRAME_ID: AtomicU64 = AtomicU64::new(0);
 
 use crate::pairing::{get_or_create_pair_token, redact_token};
 use crate::remote_screen::capture::WgcCapturer;
@@ -196,7 +202,13 @@ impl RemoteScreenHost {
                 tick_count += 1;
 
                 let fresh_tex = capturer.get_next_texture().ok().flatten();
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
                 let tex = if let Some(t) = fresh_tex {
+                    LAST_WGC_FRAME_TIME_MS.store(now_ms, Ordering::Relaxed);
                     last_tex = Some(t.clone());
                     Some(t)
                 } else {
@@ -208,8 +220,27 @@ impl RemoteScreenHost {
                 }
 
                 while let Some(resp) = encoder_clone.try_recv_response() {
-                    if let EncoderResponse::EncodedSample { data, .. } = resp {
-                        let _ = broadcaster.send(data);
+                    if let EncoderResponse::EncodedSample { data, metrics } = resp {
+                        let enc_now_ms = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        LAST_ENCODED_FRAME_TIME_MS.store(enc_now_ms, Ordering::Relaxed);
+                        if metrics.is_keyframe {
+                            let pending_req = LAST_REQUESTED_KEYFRAME_ID.swap(0, Ordering::Relaxed);
+                            let req_str = if pending_req > 0 {
+                                format!(" #{}", pending_req)
+                            } else {
+                                String::new()
+                            };
+                            println!("[DIAGNOSTIC] IDR_ENCODED{}", req_str);
+                            if broadcaster.send(data).is_ok() {
+                                LAST_WS_SEND_TIME_MS.store(enc_now_ms, Ordering::Relaxed);
+                                println!("[DIAGNOSTIC] IDR_SENT{}", req_str);
+                            }
+                        } else if broadcaster.send(data).is_ok() {
+                            LAST_WS_SEND_TIME_MS.store(enc_now_ms, Ordering::Relaxed);
+                        }
                     }
                 }
             }
@@ -318,12 +349,31 @@ impl RemoteScreenHost {
 
     pub fn force_keyframe(&self) {
         if let Some(encoder) = &self.encoder {
+            let req_id = KEYFRAME_REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+            LAST_REQUESTED_KEYFRAME_ID.store(req_id, Ordering::Relaxed);
             let _ = encoder.force_keyframe();
-            println!("[REMOTE_SCREEN_HOST] Keyframe forced (IDR)");
+            let wgc_t = LAST_WGC_FRAME_TIME_MS.load(Ordering::Relaxed);
+            let enc_t = LAST_ENCODED_FRAME_TIME_MS.load(Ordering::Relaxed);
+            let ws_t = LAST_WS_SEND_TIME_MS.load(Ordering::Relaxed);
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            println!(
+                "[DIAGNOSTIC] KEYFRAME_REQUEST #{}\n[DIAGNOSTIC] [KEYFRAME_REQUESTED] lastWgcMs={} lastEncMs={} lastWsSendMs={} timestamp={}",
+                req_id,
+                if wgc_t == 0 { 0 } else { now.saturating_sub(wgc_t) },
+                if enc_t == 0 { 0 } else { now.saturating_sub(enc_t) },
+                if ws_t == 0 { 0 } else { now.saturating_sub(ws_t) },
+                now
+            );
         }
     }
 
     pub fn can_process_input(&self, peer: &SocketAddr) -> InputPermission {
+        if !self.is_authenticated(peer) {
+            return InputPermission::Blocked;
+        }
         if self.screen_session_token.is_some() {
             if self.owning_peer == Some(*peer) {
                 InputPermission::Allowed
@@ -406,6 +456,53 @@ mod tests {
         // 6. Verify input ownership reverted: BOTH Peer A and Peer B are allowed normal input
         assert_eq!(host.can_process_input(&peer_a), InputPermission::Allowed);
         assert_eq!(host.can_process_input(&peer_b), InputPermission::Allowed);
+        assert!(host.screen_session_token().is_none());
+    }
+
+    #[test]
+    fn test_unauthenticated_peer_input_blocked() {
+        let pair_token = "test_pair_token_12345678".to_string();
+        let mut host = RemoteScreenHost {
+            pair_token,
+            screen_session_token: None,
+            owning_peer: None,
+            authenticated_peers: HashSet::new(),
+            reconnect_deadline: None,
+            width: 1920,
+            height: 1080,
+            encoder: None,
+            capture_stop_signal: None,
+            capture_thread: None,
+        };
+
+        let peer_auth: SocketAddr = "192.168.1.10:1000".parse().unwrap();
+        let peer_unauth: SocketAddr = "192.168.1.20:2000".parse().unwrap();
+
+        assert!(host.handle_auth(peer_auth, "test_pair_token_12345678"));
+        assert!(!host.handle_auth(peer_unauth, "wrong_token"));
+
+        assert_eq!(host.can_process_input(&peer_auth), InputPermission::Allowed);
+        assert_eq!(host.can_process_input(&peer_unauth), InputPermission::Blocked);
+    }
+
+    #[test]
+    fn test_single_keyframe_request_flow() {
+        let pair_token = "test_pair_token_12345678".to_string();
+        let host = RemoteScreenHost {
+            pair_token,
+            screen_session_token: None,
+            owning_peer: None,
+            authenticated_peers: HashSet::new(),
+            reconnect_deadline: None,
+            width: 1920,
+            height: 1080,
+            encoder: None,
+            capture_stop_signal: None,
+            capture_thread: None,
+        };
+
+        // Calling force_keyframe when encoder is None does not panic or loop
+        host.force_keyframe();
         assert!(host.screen_session_token().is_none());
     }
 }

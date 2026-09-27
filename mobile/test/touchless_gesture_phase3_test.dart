@@ -133,6 +133,9 @@ class MockPouseTransport implements PouseTransport {
   }
 
   @override
+  void sendSystemMagnify(double scale) {}
+
+  @override
   void releaseAll() {
     releaseAllCount++;
   }

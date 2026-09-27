@@ -4,6 +4,7 @@ import 'mouse_mode_manager.dart';
 import 'pairing_payload.dart';
 import 'qr_scanner_screen.dart';
 import 'sources/motion_source.dart';
+import 'sources/remote_screen_source.dart';
 import 'sources/touchpad_source.dart';
 import 'sources/touchless_source.dart';
 import 'transports/bluetooth_hid_service.dart';
@@ -11,6 +12,7 @@ import 'transports/bluetooth_rfcomm_service.dart';
 import 'transports/pouse_transport.dart';
 import 'transports/transport_manager.dart';
 import 'views/motion_view.dart';
+import 'views/remote_screen_spike_view.dart';
 import 'views/touchpad_view.dart';
 import 'views/touchless_view.dart';
 import 'websocket_service.dart';
@@ -38,9 +40,11 @@ class _MainScreenState extends State<MainScreen> {
 
   late final TouchpadSource _touchpadSource;
   late final MotionSource _motionSource;
+  late final RemoteScreenSource _remoteScreenSource;
   late final TouchlessSource _touchlessSource;
 
   bool _isBtConnecting = false;
+  bool _isRemoteScreenFullscreen = false;
 
   @override
   void initState() {
@@ -52,6 +56,7 @@ class _MainScreenState extends State<MainScreen> {
 
     _touchpadSource = TouchpadSource(_transportManager.activeTransport);
     _motionSource = MotionSource(_transportManager.activeTransport);
+    _remoteScreenSource = RemoteScreenSource(_transportManager.activeTransport);
     _touchlessSource = TouchlessSource(_transportManager.activeTransport);
 
     _transportManager.addListener(_onActiveTransportChanged);
@@ -60,6 +65,7 @@ class _MainScreenState extends State<MainScreen> {
 
     _modeManager.registerSource(_touchpadSource);
     _modeManager.registerSource(_motionSource);
+    _modeManager.registerSource(_remoteScreenSource);
     _modeManager.registerSource(_touchlessSource);
 
     _loadSavedIp();
@@ -69,6 +75,7 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _touchpadSource.setTransport(_transportManager.activeTransport);
       _motionSource.setTransport(_transportManager.activeTransport);
+      _remoteScreenSource.setTransport(_transportManager.activeTransport);
       _touchlessSource.setTransport(_transportManager.activeTransport);
     });
   }
@@ -110,6 +117,16 @@ class _MainScreenState extends State<MainScreen> {
     await prefs.setString('pouse_pc_ip', ip);
   }
 
+  Future<void> _savePairToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('pouse_pair_token', token);
+  }
+
+  Future<String?> _loadSavedPairToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('pouse_pair_token');
+  }
+
   Future<void> _openQrScanner() async {
     final payload = await Navigator.of(context).push<PairingPayload>(
       MaterialPageRoute(builder: (context) => const QrScannerScreen()),
@@ -118,6 +135,9 @@ class _MainScreenState extends State<MainScreen> {
     if (payload != null && mounted) {
       _ipController.text = payload.host;
       await _saveIp(payload.host);
+      if (payload.pairToken != null && payload.pairToken!.isNotEmpty) {
+        await _savePairToken(payload.pairToken!);
+      }
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -145,9 +165,11 @@ class _MainScreenState extends State<MainScreen> {
         return;
       }
       _saveIp(ip);
+      final pairToken = await _loadSavedPairToken();
       final success = await _transportManager.switchTransport(
         TransportType.wifi,
         ipAddress: ip,
+        pairToken: pairToken,
       );
       if (!success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -200,87 +222,109 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121214),
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.mouse, color: Colors.blueAccent, size: 20),
-            const SizedBox(width: 8),
-            ListenableBuilder(
-              listenable: _modeManager,
-              builder: (context, _) {
-                final source = _modeManager.activeSource;
-                final modeName = source?.displayName ?? 'Touchpad';
-                return Text(
-                  'Pouse — $modeName',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                );
-              },
-            ),
-            const Spacer(),
-            // Compact Connection Status Dot (●)
-            ValueListenableBuilder<TransportType>(
-              valueListenable: ValueNotifier(_transportManager.activeType),
-              builder: (context, transportType, child) {
-                final isWifi = _transportManager.activeType == TransportType.wifi;
-                final statusNotifier = isWifi ? _wsService.statusNotifier : _rfcommService.statusNotifier;
+      appBar: _isRemoteScreenFullscreen
+          ? null
+          : AppBar(
+              title: Row(
+                children: [
+                  const Icon(Icons.mouse, color: Colors.blueAccent, size: 20),
+                  const SizedBox(width: 8),
+                  ListenableBuilder(
+                    listenable: _modeManager,
+                    builder: (context, _) {
+                      final source = _modeManager.activeSource;
+                      final modeName = source?.displayName ?? 'Touchpad';
+                      return Text(
+                        'Pouse — $modeName',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      );
+                    },
+                  ),
+                  const Spacer(),
+                  // Compact Connection Status Dot (●)
+                  ValueListenableBuilder<TransportType>(
+                    valueListenable: ValueNotifier(_transportManager.activeType),
+                    builder: (context, transportType, child) {
+                      final isWifi = _transportManager.activeType == TransportType.wifi;
+                      final statusNotifier = isWifi ? _wsService.statusNotifier : _rfcommService.statusNotifier;
 
-                return ValueListenableBuilder<ConnectionStatus>(
-                  valueListenable: statusNotifier,
-                  builder: (context, status, child) {
-                    return Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(status),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: _getStatusColor(status).withValues(alpha: 0.6),
-                            blurRadius: 6,
-                          ),
-                        ],
-                      ),
+                      return ValueListenableBuilder<ConnectionStatus>(
+                        valueListenable: statusNotifier,
+                        builder: (context, status, child) {
+                          return Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: _getStatusColor(status),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _getStatusColor(status).withValues(alpha: 0.6),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF1E1E24),
+              elevation: 0,
+            ),
+      body: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        bottom: !_isRemoteScreenFullscreen,
+        child: Column(
+          children: [
+            if (!_isRemoteScreenFullscreen) ...[
+              // Compact Connection & IP Header Bar [ 📶 192.168.1.12 ] [▣] [ ⏻ ]
+              _buildCompactConnectionHeader(),
+
+              // Equal-Width Responsive Mode Selector Row [ 👆 Touchpad ] [ ◉ Motion ] [ ✋ Touchless ]
+              _buildModeSelectorBar(),
+            ],
+
+            // Active Mode Main Interaction View Container
+            Expanded(
+              child: ListenableBuilder(
+                listenable: _modeManager,
+                builder: (context, _) {
+                  final source = _modeManager.activeSource;
+                  if (source is TouchpadSource) {
+                    return TouchpadView(source: source);
+                  } else if (source is MotionSource) {
+                    return MotionView(source: source);
+                  } else if (source is RemoteScreenSource) {
+                    return RemoteScreenSpikeView(
+                      source: source,
+                      initialHost: _ipController.text.trim(),
+                      onFullscreenChanged: (isFs) {
+                        if (_isRemoteScreenFullscreen != isFs && mounted) {
+                          setState(() {
+                            _isRemoteScreenFullscreen = isFs;
+                          });
+                        }
+                      },
                     );
-                  },
-                );
-              },
+                  } else if (source is TouchlessSource) {
+                    return TouchlessView(source: source);
+                  }
+                  return const Center(
+                    child: Text(
+                      'No active mode selected',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  );
+                },
+              ),
             ),
           ],
         ),
-        backgroundColor: const Color(0xFF1E1E24),
-        elevation: 0,
-      ),
-      body: Column(
-        children: [
-          // Compact Connection & IP Header Bar [ 📶 192.168.1.12 ] [▣] [ ⏻ ]
-          _buildCompactConnectionHeader(),
-
-          // Equal-Width Responsive Mode Selector Row [ 👆 Touchpad ] [ ◉ Motion ] [ ✋ Touchless ]
-          _buildModeSelectorBar(),
-
-          // Active Mode Main Interaction View Container
-          Expanded(
-            child: ListenableBuilder(
-              listenable: _modeManager,
-              builder: (context, _) {
-                final source = _modeManager.activeSource;
-                if (source is TouchpadSource) {
-                  return TouchpadView(source: source);
-                } else if (source is MotionSource) {
-                  return MotionView(source: source);
-                } else if (source is TouchlessSource) {
-                  return TouchlessView(source: source);
-                }
-                return const Center(
-                  child: Text(
-                    'No active mode selected',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -806,7 +850,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildModeSelectorBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       color: const Color(0xFF16161B),
       child: ListenableBuilder(
         listenable: _modeManager,
@@ -824,7 +868,7 @@ class _MainScreenState extends State<MainScreen> {
                   onTap: () => _modeManager.selectMode(MouseMode.touchpad),
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Expanded(
                 child: _buildEqualModeButton(
                   mode: MouseMode.motion,
@@ -835,7 +879,18 @@ class _MainScreenState extends State<MainScreen> {
                   onTap: () => _modeManager.selectMode(MouseMode.motion),
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildEqualModeButton(
+                  mode: MouseMode.remoteScreen,
+                  label: 'Remote Screen',
+                  icon: Icons.desktop_windows,
+                  isSelected: currentMode == MouseMode.remoteScreen,
+                  isEnabled: true,
+                  onTap: () => _modeManager.selectMode(MouseMode.remoteScreen),
+                ),
+              ),
+              const SizedBox(width: 4),
               Expanded(
                 child: _buildEqualModeButton(
                   mode: MouseMode.touchless,
@@ -869,7 +924,7 @@ class _MainScreenState extends State<MainScreen> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 2),
           decoration: BoxDecoration(
             color: isSelected
                 ? Colors.blueAccent.withValues(alpha: 0.25)
@@ -887,18 +942,19 @@ class _MainScreenState extends State<MainScreen> {
             children: [
               Icon(
                 icon,
-                size: 15,
+                size: 13.5,
                 color: isSelected
                     ? Colors.blueAccent
                     : (isEnabled ? Colors.white70 : Colors.white30),
               ),
-              const SizedBox(width: 4),
-              FittedBox(
-                fit: BoxFit.scaleDown,
+              const SizedBox(width: 2),
+              Flexible(
                 child: Text(
                   label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                     color: isSelected
                         ? Colors.white

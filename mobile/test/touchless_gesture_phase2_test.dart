@@ -101,6 +101,9 @@ class MockPouseTransport implements PouseTransport {
   void sendFourFingerRight() {}
 
   @override
+  void sendSystemMagnify(double scale) {}
+
+  @override
   void releaseAll() {
     releaseAllCount++;
   }

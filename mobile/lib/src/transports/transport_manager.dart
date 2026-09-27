@@ -47,6 +47,7 @@ class TransportManager extends ChangeNotifier {
     String? ipAddress,
     String? wifiIp,
     int wifiPort = 8081,
+    String? pairToken,
     String? btAddress,
     String? bluetoothDeviceAddress,
   }) async {
@@ -55,7 +56,7 @@ class TransportManager extends ChangeNotifier {
 
     if (targetType == activeType) {
       if (targetType == TransportType.wifi && hostIp != null) {
-        await wifiTransport.connect(hostIp, port: wifiPort);
+        await wifiTransport.connect(hostIp, port: wifiPort, pairToken: pairToken);
       } else if (targetType == TransportType.bluetooth) {
         if (bluetoothTransport is BluetoothRfcommService) {
           await (bluetoothTransport as BluetoothRfcommService).startServer();
@@ -74,7 +75,7 @@ class TransportManager extends ChangeNotifier {
 
     try {
       if (targetType == TransportType.wifi && hostIp != null) {
-        await wifiTransport.connect(hostIp, port: wifiPort);
+        await wifiTransport.connect(hostIp, port: wifiPort, pairToken: pairToken);
       } else if (targetType == TransportType.bluetooth) {
         if (bluetoothTransport is BluetoothRfcommService) {
           await (bluetoothTransport as BluetoothRfcommService).startServer();

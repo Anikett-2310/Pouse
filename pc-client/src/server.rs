@@ -190,18 +190,22 @@ async fn handle_input_connection(
                         // Control protocol events bypass input locking
                         match &event {
                             PouseEvent::Auth { token } => {
-                                let resp = {
+                                let (is_ok, resp) = {
                                     let mut host_guard = host.lock().unwrap();
                                     if host_guard.handle_auth(peer_addr, token) {
-                                        serde_json::json!({ "event": "AUTH_OK" }).to_string()
+                                        (true, serde_json::json!({ "event": "AUTH_OK" }).to_string())
                                     } else {
-                                        serde_json::json!({
+                                        (false, serde_json::json!({
                                             "event": "ERROR",
                                             "message": "Invalid pairToken"
-                                        }).to_string()
+                                        }).to_string())
                                     }
                                 };
                                 let _ = ws_sender.send(Message::Text(resp.into())).await;
+                                if !is_ok {
+                                    println!("[SECURITY] Rejecting and disconnecting peer {} due to invalid pairToken", peer_addr);
+                                    break;
+                                }
                                 continue;
                             }
                             PouseEvent::StartScreen => {

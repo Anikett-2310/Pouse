@@ -304,6 +304,9 @@ class BluetoothHidService implements PouseTransport {
   }
 
   @override
+  void sendSystemMagnify(double scale) {}
+
+  @override
   void releaseAll() {
     _heldButtonsMask = 0;
     _heldKeycodes.clear();

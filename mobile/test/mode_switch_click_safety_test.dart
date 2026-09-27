@@ -85,6 +85,11 @@ class MockSafetyTransport implements PouseTransport {
   void sendFourFingerRight() {}
 
   @override
+  void sendSystemMagnify(double scale) {
+    eventLog.add('SYSTEM_MAGNIFY');
+  }
+
+  @override
   void releaseAll() {
     eventLog.add('RELEASE_ALL');
   }

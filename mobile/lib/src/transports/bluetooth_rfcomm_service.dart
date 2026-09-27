@@ -286,7 +286,17 @@ class BluetoothRfcommService implements PouseTransport {
   }
 
   @override
+  void sendSystemMagnify(double scale) {
+    if (_status != ConnectionStatus.connected) return;
+    sendEvent({
+      'event': 'SYSTEM_MAGNIFY',
+      'scale': scale,
+    });
+  }
+
+  @override
   void releaseAll() {
+
     if (_isLeftButtonDown) {
       sendButtonUp('left');
     }

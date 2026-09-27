@@ -4,22 +4,34 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../sources/remote_screen_source.dart';
 import '../utils/remote_screen_coordinate_mapper.dart';
 import '../websocket_service.dart';
+import '../widgets/shared_utilities_dock.dart';
 
-/// Spike 3 — Remote Screen Touch + Control View
-///
-/// Implements live Remote Screen video decoding alongside touch-to-cursor control.
-///
-/// Touch interactions:
-/// - Single-finger touch/move -> ABS_MOVE (normalized x,y in [0.0, 1.0])
-/// - Single-finger tap -> LEFT_CLICK
-/// - Single-finger double-tap -> DOUBLE_CLICK
-/// - Two-finger tap -> RIGHT_CLICK
-/// - Touch drag -> BUTTON_DOWN('left') -> ABS_MOVE stream -> BUTTON_UP('left')
-/// - Touches in letterbox/pillarbox padding are strictly ignored.
+/// Gesture state machine states for Remote Screen control
+enum RemoteScreenGestureState {
+  idle,
+  oneFingerUndecided,
+  oneFingerDrag,
+  twoFingerUndecided,
+  twoFingerPinchPan,
+}
+
+enum TwoFingerMode { undecided, scroll, zoom }
+
+/// Production Remote Screen UX & Interaction V1 View
 class RemoteScreenSpikeView extends StatefulWidget {
-  const RemoteScreenSpikeView({super.key});
+  final RemoteScreenSource? source;
+  final String? initialHost;
+  final ValueChanged<bool>? onFullscreenChanged;
+
+  const RemoteScreenSpikeView({
+    super.key,
+    this.source,
+    this.initialHost,
+    this.onFullscreenChanged,
+  });
 
   @override
   State<RemoteScreenSpikeView> createState() => _RemoteScreenSpikeViewState();
@@ -29,303 +41,479 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
   static const _methodChannel = MethodChannel('pouse/remote_screen/method');
   static const _eventChannel = EventChannel('pouse/remote_screen/events');
 
-  final TextEditingController _hostController = TextEditingController(text: '192.168.1.10');
-  final TextEditingController _portController = TextEditingController(text: '8081');
-
-  final WebSocketService _controlWs = WebSocketService();
-
   StreamSubscription? _metricsSub;
 
   String _videoState = 'UNINITIALIZED';
-  double _wsRxFps = 0.0;
-  double _decoderFps = 0.0;
-  int _rxCount = 0;
-  int _decodedCount = 0;
-  int _droppedCount = 0;
-  int _timeToFirstFrameMs = -1;
-  int _timeFromForcedIdrMs = -1;
   String _lastError = '';
 
   // Captured monitor dimensions (defaults to 1280x720)
   int _capturedWidth = 1280;
   int _capturedHeight = 720;
-  RemoteScreenCoordinateMapper get _mapper => RemoteScreenCoordinateMapper(width: _capturedWidth, height: _capturedHeight);
+  RemoteScreenCoordinateMapper get _mapper =>
+      RemoteScreenCoordinateMapper(width: _capturedWidth, height: _capturedHeight);
 
-  // Touch & Control metrics
-  double? _lastAbsX;
-  double? _lastAbsY;
-  int _absMoveCount = 0;
-  String _lastGesture = 'None';
-  bool _isOutsideTouch = false;
+  // Zoom & Pan transform state
+  double _zoomScale = 1.0;
+  Offset _panOffset = Offset.zero;
 
-  // Touch gesture state machine
-  int _pointerCount = 0;
-  int _maxPointerCount = 0;
+  // Fullscreen state
+  bool _isFullscreen = false;
+  bool _showFullscreenUtilities = false;
+
+  // Touch indicator state
+  Offset? _touchIndicatorLocalPos;
+  Timer? _touchIndicatorTimer;
+
+  // Gesture state machine
+  RemoteScreenGestureState _gestureState = RemoteScreenGestureState.idle;
+
+  // Pointer tracking (max 2)
   final Map<int, Offset> _pointerPositions = {};
   final Map<int, Offset> _initialPositions = {};
+  final List<int> _pointerOrder = [];
 
-  bool _isDragging = false;
+  int? _primaryPointerId;
+  Offset? _primaryStartPos;
   bool _isLeftButtonHeld = false;
 
-  DateTime? _lastTapUpTime;
-  Offset? _lastTapUpPos;
+  // Double-tap and single-tap timer
   Timer? _singleTapTimer;
+  DateTime? _lastTapTime;
+  Offset? _lastTapLocalPos;
 
-  static const double _touchSlop = 6.0;
+  // Two-finger classification tracking
+  double _initialTwoFingerDistance = 0.0;
+  Offset _initialTwoFingerMidpoint = Offset.zero;
+  double _initialZoomOnPinch = 1.0;
+  Offset _initialPanOnPinch = Offset.zero;
+  TwoFingerMode _twoFingerMode = TwoFingerMode.undecided;
+  DateTime? _twoFingerStartTime;
+
+  static const double _touchSlopDp = 8.0;
   static const int _doubleTapTimeoutMs = 300;
-  static const int _singleTapDelayMs = 200;
+  static const int _singleTapDelayMs = 220;
 
   @override
   void initState() {
     super.initState();
     _listenMetrics();
+    _autoStartSession();
   }
+
+  String _sessionState = 'IDLE';
+  String _uiState = 'CONNECTING';
+  int _framesDecoded = 0;
 
   void _listenMetrics() {
     _metricsSub = _eventChannel.receiveBroadcastStream().listen((dynamic event) {
-      if (event is Map) {
+      if (event is Map && mounted) {
+        final newWidth = (event['width'] != null && (event['width'] as num).toInt() > 0)
+            ? (event['width'] as num).toInt()
+            : _capturedWidth;
+        final newHeight = (event['height'] != null && (event['height'] as num).toInt() > 0)
+            ? (event['height'] as num).toInt()
+            : _capturedHeight;
+
         setState(() {
           _videoState = event['state']?.toString() ?? 'UNKNOWN';
-          _wsRxFps = (event['wsReceivedFps'] as num?)?.toDouble() ?? 0.0;
-          _decoderFps = (event['decoderOutputFps'] as num?)?.toDouble() ?? 0.0;
-          _rxCount = (event['framesReceived'] as num?)?.toInt() ?? 0;
-          _decodedCount = (event['framesDecoded'] as num?)?.toInt() ?? 0;
-          _droppedCount = (event['framesDropped'] as num?)?.toInt() ?? 0;
-          _timeToFirstFrameMs = (event['timeToFirstDecodedFrameMs'] as num?)?.toInt() ?? -1;
-          _timeFromForcedIdrMs = (event['timeFromForcedIdrMs'] as num?)?.toInt() ?? -1;
-          if (event['width'] != null && (event['width'] as num).toInt() > 0) {
-            _capturedWidth = (event['width'] as num).toInt();
-          }
-          if (event['height'] != null && (event['height'] as num).toInt() > 0) {
-            _capturedHeight = (event['height'] as num).toInt();
+          _sessionState = event['sessionState']?.toString() ?? 'IDLE';
+          _uiState = event['uiState']?.toString() ?? 'CONNECTING';
+          _framesDecoded = (event['framesDecoded'] as num?)?.toInt() ?? _framesDecoded;
+          // Reset zoom/pan if PC resolution / metadata changes
+          if (newWidth != _capturedWidth || newHeight != _capturedHeight) {
+            _capturedWidth = newWidth;
+            _capturedHeight = newHeight;
+            _resetZoomPan();
           }
           _lastError = event['lastError']?.toString() ?? '';
         });
       }
     }, onError: (err) {
-      debugPrint('[SPIKE 3] Error receiving metrics: $err');
+      debugPrint('[REMOTE_SCREEN] Error receiving metrics: $err');
     });
   }
 
-  Future<void> _startSession() async {
+  Future<void> _autoStartSession() async {
+    final transport = widget.source?.transport;
+    String host = '127.0.0.1';
+    if (transport is WebSocketService &&
+        transport.currentIp != null &&
+        transport.currentIp!.isNotEmpty) {
+      host = transport.currentIp!;
+    } else if (widget.initialHost != null && widget.initialHost!.trim().isNotEmpty) {
+      host = widget.initialHost!.trim();
+    }
+    final pairToken = (transport is WebSocketService ? transport.pairToken : '') ?? '';
+
     try {
-      final host = _hostController.text.trim();
-      final port = int.tryParse(_portController.text.trim()) ?? 8081;
-
-      // Connect control WebSocket (/ path on same port)
-      if (!_controlWs.isConnected) {
-        await _controlWs.connect(host, port: port);
-      }
-
-      // Start Android decoder (/screen path)
-      await _methodChannel.invokeMethod('start', {'host': host, 'port': port});
+      await _methodChannel.invokeMethod('startSession', {
+        'host': host,
+        'port': 8081,
+        'pairToken': pairToken,
+      });
     } catch (e) {
-      debugPrint('[SPIKE 3] Error starting session: $e');
+      debugPrint('[REMOTE_SCREEN] Error starting session: $e');
     }
   }
 
   Future<void> _stopSession() async {
     try {
-      _controlWs.releaseAll();
-      await _controlWs.disconnect();
-      await _methodChannel.invokeMethod('stop');
+      widget.source?.transport.releaseAll();
+      await _methodChannel.invokeMethod('stopSession');
     } catch (e) {
-      debugPrint('[SPIKE 3] Error stopping session: $e');
+      debugPrint('[REMOTE_SCREEN] Error stopping session: $e');
     }
   }
 
-  Future<void> _requestForcedIdr() async {
-    try {
-      await _methodChannel.invokeMethod('requestForcedIdr');
-    } catch (e) {
-      debugPrint('[SPIKE 3] Error requesting IDR: $e');
-    }
-  }
+  String? _activeHeldArrowKey;
 
-  Future<void> _resetDecoder() async {
-    try {
-      await _methodChannel.invokeMethod('resetDecoder');
-    } catch (e) {
-      debugPrint('[SPIKE 3] Error resetting decoder: $e');
+  void _releaseHeldArrowKey() {
+    if (_activeHeldArrowKey != null) {
+      widget.source?.sendKeyUp(_activeHeldArrowKey!);
+      _activeHeldArrowKey = null;
     }
   }
 
   @override
   void dispose() {
-    _controlWs.releaseAll();
-    _controlWs.dispose();
+    _releaseHeldArrowKey();
+    _stopSession();
     _metricsSub?.cancel();
     _singleTapTimer?.cancel();
-    _hostController.dispose();
-    _portController.dispose();
+    _touchIndicatorTimer?.cancel();
+    if (_isFullscreen) {
+      widget.onFullscreenChanged?.call(false);
+    }
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
-  void _sendAbsMove(double x, double y) {
-    _controlWs.sendAbsMove(x, y);
+  void _resetZoomPan() {
+    _releaseHeldArrowKey();
     setState(() {
-      _lastAbsX = x;
-      _lastAbsY = y;
-      _absMoveCount++;
-      _isOutsideTouch = false;
+      _zoomScale = 1.0;
+      _panOffset = Offset.zero;
     });
   }
 
-  void _onPointerDown(PointerDownEvent event, Size widgetSize) {
-    final mapper = _mapper;
-    final videoRect = mapper.calculateVideoRect(widgetSize);
-    final norm = mapper.mapTouchToNormalized(event.localPosition, videoRect);
+  void _enterFullscreen() {
+    _releaseHeldArrowKey();
+    setState(() {
+      _isFullscreen = true;
+      _showFullscreenUtilities = false;
+      _zoomScale = 1.0;
+      _panOffset = Offset.zero;
+    });
+    widget.onFullscreenChanged?.call(true);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
 
-    if (norm == null) {
-      setState(() {
-        _isOutsideTouch = true;
-      });
+  void _exitFullscreen() {
+    _releaseHeldArrowKey();
+    setState(() {
+      _isFullscreen = false;
+      _showFullscreenUtilities = false;
+      _zoomScale = 1.0;
+      _panOffset = Offset.zero;
+    });
+    widget.onFullscreenChanged?.call(false);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  void _showTouchIndicator(Offset localPos) {
+    _touchIndicatorTimer?.cancel();
+    setState(() {
+      _touchIndicatorLocalPos = localPos;
+    });
+    _touchIndicatorTimer = Timer(const Duration(milliseconds: 200), () {
+      if (mounted) {
+        setState(() {
+          _touchIndicatorLocalPos = null;
+        });
+      }
+    });
+  }
+
+  void _sendAbsMove(double x, double y) {
+    widget.source?.sendAbsMove(x, y);
+  }
+
+  void _onPointerDown(PointerDownEvent event, Rect fitRect) {
+    if (fitRect.isEmpty) return;
+
+    // Touches outside fitRect MUST be ignored!
+    if (event.localPosition.dx < fitRect.left ||
+        event.localPosition.dx > fitRect.right ||
+        event.localPosition.dy < fitRect.top ||
+        event.localPosition.dy > fitRect.bottom) {
       return;
     }
 
-    _pointerCount++;
-    _maxPointerCount = math.max(_maxPointerCount, _pointerCount);
+    // Ignore 3rd finger entirely
+    if (_pointerPositions.length >= 2) {
+      return;
+    }
+
+    // Rule: A 2nd finger touching down while a 1-finger drag is already committed
+    // MUST NOT reinterpret the gesture. Ignore additional fingers & finish drag.
+    if (_gestureState == RemoteScreenGestureState.oneFingerDrag) {
+      return;
+    }
+
     _pointerPositions[event.pointer] = event.localPosition;
     _initialPositions[event.pointer] = event.localPosition;
+    if (!_pointerOrder.contains(event.pointer)) {
+      _pointerOrder.add(event.pointer);
+    }
 
-    if (_pointerCount == 1) {
-      _sendAbsMove(norm.dx, norm.dy);
-    } else if (_pointerCount >= 2) {
-      // Multi-touch candidate: cancel single-finger tap/drag
+    if (_pointerPositions.length == 1) {
+      // Single finger DOWN
+      _primaryPointerId = event.pointer;
+      _primaryStartPos = event.localPosition;
+      _gestureState = RemoteScreenGestureState.oneFingerUndecided;
+
+      final norm = _mapper.mapTouchToNormalized(
+        event.localPosition,
+        fitRect,
+        zoomScale: _zoomScale,
+        panOffset: _panOffset,
+      );
+      if (norm != null) {
+        _sendAbsMove(norm.dx, norm.dy);
+        _showTouchIndicator(event.localPosition);
+      }
+    } else if (_pointerPositions.length == 2) {
+      // Second finger DOWN -> enter two-finger undecided
       _cancelSingleTapTimer();
+      _gestureState = RemoteScreenGestureState.twoFingerUndecided;
+      _twoFingerMode = TwoFingerMode.undecided;
+      _twoFingerStartTime = DateTime.now();
+
+      final p1 = _pointerPositions[_pointerOrder[0]]!;
+      final p2 = _pointerPositions[_pointerOrder[1]]!;
+      _initialTwoFingerDistance = math.max(1.0, (p1 - p2).distance);
+      _initialTwoFingerMidpoint = Offset((p1.dx + p2.dx) / 2.0, (p1.dy + p2.dy) / 2.0);
+      _initialZoomOnPinch = _zoomScale;
+      _initialPanOnPinch = _panOffset;
+
       if (_isLeftButtonHeld) {
         _isLeftButtonHeld = false;
-        _controlWs.sendButtonUp('left');
+        widget.source?.sendButtonUp('left');
       }
     }
   }
 
-  void _onPointerMove(PointerMoveEvent event, Size widgetSize) {
-    final mapper = _mapper;
-    final videoRect = mapper.calculateVideoRect(widgetSize);
-    final norm = mapper.mapTouchToNormalized(event.localPosition, videoRect);
+  void _onPointerMove(PointerMoveEvent event, Rect fitRect) {
+    if (!_pointerPositions.containsKey(event.pointer)) return;
+    _pointerPositions[event.pointer] = event.localPosition;
 
-    if (norm == null) {
-      setState(() {
-        _isOutsideTouch = true;
-      });
+    final devicePixelRatio = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 2.0;
+    final slop = _touchSlopDp * devicePixelRatio;
+
+    if (_gestureState == RemoteScreenGestureState.oneFingerUndecided &&
+        event.pointer == _primaryPointerId &&
+        _primaryStartPos != null) {
+      final dist = (event.localPosition - _primaryStartPos!).distance;
+      if (dist > slop) {
+        _gestureState = RemoteScreenGestureState.oneFingerDrag;
+        _cancelSingleTapTimer();
+        if (!_isLeftButtonHeld) {
+          _isLeftButtonHeld = true;
+          widget.source?.sendButtonDown('left');
+        }
+      }
+    }
+
+    if (_gestureState == RemoteScreenGestureState.oneFingerDrag &&
+        event.pointer == _primaryPointerId) {
+      final norm = _mapper.mapTouchToNormalized(
+        event.localPosition,
+        fitRect,
+        zoomScale: _zoomScale,
+        panOffset: _panOffset,
+      );
+      if (norm != null) {
+        _sendAbsMove(norm.dx, norm.dy);
+      }
       return;
     }
 
-    _pointerPositions[event.pointer] = event.localPosition;
+    if ((_gestureState == RemoteScreenGestureState.twoFingerUndecided ||
+            _gestureState == RemoteScreenGestureState.twoFingerPinchPan) &&
+        _pointerOrder.length >= 2) {
+      final p1 = _pointerPositions[_pointerOrder[0]];
+      final p2 = _pointerPositions[_pointerOrder[1]];
+      if (p1 == null || p2 == null) return;
 
-    if (_pointerCount == 1 && _maxPointerCount == 1) {
-      final initPos = _initialPositions[event.pointer];
-      if (initPos != null) {
-        final dist = (event.localPosition - initPos).distance;
-        if (dist > _touchSlop) {
-          _isDragging = true;
-          _cancelSingleTapTimer();
-          if (!_isLeftButtonHeld) {
-            _isLeftButtonHeld = true;
-            _controlWs.sendButtonDown('left');
-            setState(() {
-              _lastGesture = 'Drag Started';
-            });
+      final currentDist = math.max(1.0, (p1 - p2).distance);
+      final currentMidpoint = Offset((p1.dx + p2.dx) / 2.0, (p1.dy + p2.dy) / 2.0);
+
+      final distanceChange = (currentDist - _initialTwoFingerDistance).abs();
+      final translationMag = (currentMidpoint - _initialTwoFingerMidpoint).distance;
+
+      if (_initialZoomOnPinch == 1.0) {
+        // Disambiguate 1x Pinch Zoom vs PC Scroll with density-aware slop & minimum signal
+        if (_twoFingerMode == TwoFingerMode.undecided) {
+          final signal = distanceChange + translationMag;
+          final elapsedMs = _twoFingerStartTime != null
+              ? DateTime.now().difference(_twoFingerStartTime!).inMilliseconds
+              : 0;
+
+          if (signal >= 1.5 * slop || elapsedMs >= 100 || signal >= 3.0 * slop) {
+            if (distanceChange > 1.5 * translationMag) {
+              _twoFingerMode = TwoFingerMode.zoom;
+            } else if (translationMag > 1.5 * distanceChange) {
+              _twoFingerMode = TwoFingerMode.scroll;
+            } else if (elapsedMs >= 100 || signal >= 3.0 * slop) {
+              _twoFingerMode = TwoFingerMode.scroll; // Safe default
+            }
           }
         }
+
+        if (_twoFingerMode == TwoFingerMode.scroll) {
+          final midDelta = currentMidpoint - _initialTwoFingerMidpoint;
+          widget.source?.sendScroll(midDelta.dx / 3.0, midDelta.dy / 3.0);
+          _initialTwoFingerMidpoint = currentMidpoint;
+          return;
+        } else if (_twoFingerMode == TwoFingerMode.zoom) {
+          _gestureState = RemoteScreenGestureState.twoFingerPinchPan;
+        } else {
+          return; // Still undecided signal
+        }
+      } else {
+        _gestureState = RemoteScreenGestureState.twoFingerPinchPan;
+        _twoFingerMode = TwoFingerMode.zoom;
       }
 
-      _sendAbsMove(norm.dx, norm.dy);
+      // Pinch + Pan (at zoom > 1.0x or committed zoom)
+      final distRatio = currentDist / _initialTwoFingerDistance;
+      final newZoom = (_initialZoomOnPinch * distRatio).clamp(1.0, 4.0);
+
+      // Midpoint-centered zoom + pan calculations
+      final initialFitRectMid = _initialTwoFingerMidpoint - fitRect.topLeft;
+      final currentFitRectMid = currentMidpoint - fitRect.topLeft;
+
+      final normMidX = _initialPanOnPinch.dx +
+          (initialFitRectMid.dx / fitRect.width) * (1.0 / _initialZoomOnPinch);
+      final normMidY = _initialPanOnPinch.dy +
+          (initialFitRectMid.dy / fitRect.height) * (1.0 / _initialZoomOnPinch);
+
+      final newPanX = normMidX - (currentFitRectMid.dx / fitRect.width) * (1.0 / newZoom);
+      final newPanY = normMidY - (currentFitRectMid.dy / fitRect.height) * (1.0 / newZoom);
+
+      final clampedPan = _mapper.clampPanOffset(Offset(newPanX, newPanY), newZoom);
+
+      setState(() {
+        _zoomScale = newZoom;
+        _panOffset = clampedPan;
+      });
     }
   }
 
-  void _onPointerUp(PointerUpEvent event, Size widgetSize) {
-    final mapper = _mapper;
-    final videoRect = mapper.calculateVideoRect(widgetSize);
+  void _onPointerUp(PointerUpEvent event, Rect fitRect) {
     final upPos = event.localPosition;
 
-    if (_pointerCount == 1 && _maxPointerCount == 1) {
+    if (_gestureState == RemoteScreenGestureState.oneFingerDrag &&
+        event.pointer == _primaryPointerId) {
       if (_isLeftButtonHeld) {
         _isLeftButtonHeld = false;
-        _controlWs.sendButtonUp('left');
-        setState(() {
-          _lastGesture = 'Drag Released';
-        });
-      } else if (!_isDragging) {
-        final norm = mapper.mapTouchToNormalized(upPos, videoRect);
-        if (norm != null) {
-          final now = DateTime.now();
-          if (_lastTapUpTime != null &&
-              _lastTapUpPos != null &&
-              now.difference(_lastTapUpTime!).inMilliseconds < _doubleTapTimeoutMs &&
-              (upPos - _lastTapUpPos!).distance < 30.0) {
-            // Double Tap
-            _cancelSingleTapTimer();
-            _lastTapUpTime = null;
-            _lastTapUpPos = null;
-            _controlWs.sendDoubleClick();
-            setState(() {
-              _lastGesture = 'Double Tap (LEFT_CLICK x2)';
-            });
-          } else {
-            // Potential single tap
-            _lastTapUpTime = now;
-            _lastTapUpPos = upPos;
-            _singleTapTimer = Timer(const Duration(milliseconds: _singleTapDelayMs), () {
-              _controlWs.sendLeftClick();
-              _lastTapUpTime = null;
-              _lastTapUpPos = null;
-              setState(() {
-                _lastGesture = 'Single Tap (LEFT_CLICK)';
-              });
-            });
-          }
-        }
+        widget.source?.sendButtonUp('left');
       }
-    } else if (_maxPointerCount == 2 && _pointerCount == 1) {
-      // Two-finger tap completion
-      bool exceededSlop = false;
-      for (final entry in _pointerPositions.entries) {
-        final init = _initialPositions[entry.key];
-        if (init != null && (entry.value - init).distance > 15.0) {
-          exceededSlop = true;
-          break;
-        }
-      }
-      if (!exceededSlop) {
-        final norm = mapper.mapTouchToNormalized(upPos, videoRect);
-        if (norm != null) {
-          _controlWs.sendRightClick();
-          setState(() {
-            _lastGesture = 'Two-Finger Tap (RIGHT_CLICK)';
+      _gestureState = RemoteScreenGestureState.idle;
+    } else if (_gestureState == RemoteScreenGestureState.oneFingerUndecided &&
+        event.pointer == _primaryPointerId) {
+      final norm = _mapper.mapTouchToNormalized(
+        upPos,
+        fitRect,
+        zoomScale: _zoomScale,
+        panOffset: _panOffset,
+      );
+      if (norm != null) {
+        final now = DateTime.now();
+        if (_lastTapTime != null &&
+            _lastTapLocalPos != null &&
+            now.difference(_lastTapTime!).inMilliseconds < _doubleTapTimeoutMs &&
+            (upPos - _lastTapLocalPos!).distance < 30.0) {
+          // Double Tap
+          _cancelSingleTapTimer();
+          _lastTapTime = null;
+          _lastTapLocalPos = null;
+          widget.source?.sendDoubleClick();
+          _showTouchIndicator(upPos);
+        } else {
+          // Single Tap candidate
+          _lastTapTime = now;
+          _lastTapLocalPos = upPos;
+          _singleTapTimer = Timer(const Duration(milliseconds: _singleTapDelayMs), () {
+            widget.source?.sendLeftClick();
+            _showTouchIndicator(upPos);
+            _lastTapTime = null;
+            _lastTapLocalPos = null;
           });
         }
       }
+      _gestureState = RemoteScreenGestureState.idle;
+    } else if (_gestureState == RemoteScreenGestureState.twoFingerUndecided &&
+        _twoFingerMode == TwoFingerMode.undecided) {
+      // Two-finger tap -> Right Click
+      final norm = _mapper.mapTouchToNormalized(
+        upPos,
+        fitRect,
+        zoomScale: _zoomScale,
+        panOffset: _panOffset,
+      );
+      if (norm != null) {
+        widget.source?.sendRightClick();
+        _showTouchIndicator(upPos);
+      }
+      _gestureState = RemoteScreenGestureState.idle;
+    } else if (_pointerPositions.length <= 1) {
+      _gestureState = RemoteScreenGestureState.idle;
     }
 
-    _pointerCount = math.max(0, _pointerCount - 1);
     _pointerPositions.remove(event.pointer);
     _initialPositions.remove(event.pointer);
+    _pointerOrder.remove(event.pointer);
 
-    if (_pointerCount == 0) {
-      _maxPointerCount = 0;
-      _isDragging = false;
+    if (_pointerPositions.isEmpty) {
+      _primaryPointerId = null;
+      _primaryStartPos = null;
+      _gestureState = RemoteScreenGestureState.idle;
+      _twoFingerMode = TwoFingerMode.undecided;
     }
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
     if (_isLeftButtonHeld) {
       _isLeftButtonHeld = false;
-      _controlWs.sendButtonUp('left');
+      widget.source?.sendButtonUp('left');
     }
-    _controlWs.releaseAll();
+    widget.source?.transport.releaseAll();
     _resetGestureState();
   }
 
   void _resetGestureState() {
     _cancelSingleTapTimer();
-    _pointerCount = 0;
-    _maxPointerCount = 0;
     _pointerPositions.clear();
     _initialPositions.clear();
-    _isDragging = false;
+    _pointerOrder.clear();
+    _primaryPointerId = null;
+    _primaryStartPos = null;
     _isLeftButtonHeld = false;
+    _gestureState = RemoteScreenGestureState.idle;
+    _twoFingerMode = TwoFingerMode.undecided;
   }
 
   void _cancelSingleTapTimer() {
@@ -333,291 +521,509 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
     _singleTapTimer = null;
   }
 
+  void _adjustZoom(double delta) {
+    final newZoom = (_zoomScale + delta).clamp(1.0, 4.0);
+    final clampedPan = _mapper.clampPanOffset(_panOffset, newZoom);
+    setState(() {
+      _zoomScale = newZoom;
+      _panOffset = clampedPan;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(
-        title: const Text('Spike 3: Remote Screen Touch & Control'),
-        backgroundColor: const Color(0xFF1E293B),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final rightInset = MediaQuery.paddingOf(context).right;
+    final leftInset = MediaQuery.paddingOf(context).left;
+    final isDecoding = _videoState == 'DECODING' ||
+        _videoState == 'CONNECTED' ||
+        _sessionState == 'CONNECTED' ||
+        _framesDecoded > 0;
+
+    return PopScope(
+      canPop: !_isFullscreen,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isFullscreen) {
+          _exitFullscreen();
+        }
+      },
+      child: Container(
+        color: const Color(0xFF0F172A),
+        child: Stack(
           children: [
-            // Controls Card
-            Card(
-              color: const Color(0xFF1E293B),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  children: [
-                    Row(
+            Column(
+              children: [
+                // Top Status Bar (Portrait only)
+                if (!_isFullscreen)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    color: const Color(0xFF1E293B),
+                    child: Row(
                       children: [
-                        Expanded(
-                          flex: 3,
-                          child: TextField(
-                            controller: _hostController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              labelText: 'PC Host IP',
-                              labelStyle: TextStyle(color: Colors.grey),
-                              enabledBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.blueAccent),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.blue),
-                              ),
-                            ),
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: _uiState == 'LIVE'
+                                ? Colors.greenAccent
+                                : (_uiState == 'ERROR'
+                                    ? Colors.redAccent
+                                    : Colors.orangeAccent),
+                            shape: BoxShape.circle,
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          flex: 1,
-                          child: TextField(
-                            controller: _portController,
-                            style: const TextStyle(color: Colors.white),
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Port',
-                              labelStyle: TextStyle(color: Colors.grey),
-                              enabledBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.blueAccent),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.blue),
-                              ),
+                          child: Text(
+                            _lastError.isNotEmpty
+                                ? 'ERROR: $_lastError'
+                                : (_uiState == 'LIVE'
+                                    ? 'LIVE • Remote Screen Active'
+                                    : (_uiState == 'WAITING_FOR_FIRST_FRAME'
+                                        ? 'WAITING_FOR_FIRST_FRAME • Initializing'
+                                        : (_uiState == 'VIDEO_CONNECTED'
+                                            ? 'VIDEO_CONNECTED • Waiting for Keyframe'
+                                            : (_uiState == 'VIDEO_STALLED'
+                                                ? 'VIDEO_STALLED • Recovering'
+                                                : (_uiState == 'RECONNECTING'
+                                                    ? 'RECONNECTING'
+                                                    : 'CONNECTING'))))),
+                            style: TextStyle(
+                              color: _lastError.isNotEmpty || _uiState == 'ERROR'
+                                  ? Colors.redAccent
+                                  : Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _startSession,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Connect Video & Control'),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: _stopSession,
-                          icon: const Icon(Icons.stop),
-                          label: const Text('Stop'),
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _requestForcedIdr,
-                          icon: const Icon(Icons.sync),
-                          label: const Text('Force IDR'),
-                          style: OutlinedButton.styleFrom(foregroundColor: Colors.orangeAccent),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _resetDecoder,
-                          icon: const Icon(Icons.restart_alt),
-                          label: const Text('Reset Decoder'),
-                          style: OutlinedButton.styleFrom(foregroundColor: Colors.purpleAccent),
+                        if (isDecoding)
+                          Text(
+                            '$_capturedWidth×$_capturedHeight',
+                            style: const TextStyle(
+                              color: Colors.white38,
+                              fontSize: 11,
+                            ),
+                          ),
+                        const SizedBox(width: 8),
+                        // Fullscreen Enter Button ⛶
+                        IconButton(
+                          onPressed: _enterFullscreen,
+                          icon: const Icon(Icons.fullscreen, size: 18),
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(32, 32),
+                            padding: EdgeInsets.zero,
+                            foregroundColor: Colors.white,
+                            backgroundColor: const Color(0xFF2A2A36),
+                          ),
+                          tooltip: 'Fullscreen Mode',
                         ),
                       ],
                     ),
-                  ],
+                  ),
+
+                // Main Live Video Surface Container (ALWAYS MOUNTED IN SUBTREE)
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+                      final fitRect = _mapper.calculateVideoRect(containerSize);
+
+                      return Container(
+                        color: Colors.black,
+                        child: Stack(
+                          children: [
+                            // Video Decoder Native Surface inside fitRect
+                            if (fitRect.width > 0 && fitRect.height > 0)
+                              Positioned.fromRect(
+                                rect: fitRect,
+                                child: ClipRect(
+                                  child: Transform(
+                                    transform: Matrix4.identity()
+                                      ..translateByDouble(
+                                        -_panOffset.dx * _zoomScale * fitRect.width,
+                                        -_panOffset.dy * _zoomScale * fitRect.height,
+                                        0.0,
+                                        1.0,
+                                      )
+                                      ..scaleByDouble(_zoomScale, _zoomScale, 1.0, 1.0),
+                                    transformHitTests: false,
+                                    child: defaultTargetPlatform == TargetPlatform.android
+                                        ? const AndroidView(
+                                            viewType: 'pouse/remote_screen_view',
+                                            creationParamsCodec: StandardMessageCodec(),
+                                          )
+                                        : const Center(
+                                            child: Text(
+                                              'Android Platform View',
+                                              style: TextStyle(color: Colors.white54),
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                              ),
+
+                            // Touch Interaction Overlay over full container
+                            Positioned.fill(
+                              child: Listener(
+                                behavior: HitTestBehavior.opaque,
+                                onPointerDown: (e) => _onPointerDown(e, fitRect),
+                                onPointerMove: (e) => _onPointerMove(e, fitRect),
+                                onPointerUp: (e) => _onPointerUp(e, fitRect),
+                                onPointerCancel: _onPointerCancel,
+                                child: CustomPaint(
+                                  size: containerSize,
+                                  painter: _TouchIndicatorPainter(
+                                    fitRect: fitRect,
+                                    indicatorLocalPos: _touchIndicatorLocalPos,
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                            // Portrait Mode Zoom HUD (top-right overlay)
+                            if (!_isFullscreen)
+                              Positioned(
+                                top: 12,
+                                right: 12,
+                                child: _buildZoomHud(),
+                              ),
+
+                            // Fullscreen CLOSED State: LIVE PC SCREEN + ⋯ ONLY
+                            if (_isFullscreen && !_showFullscreenUtilities)
+                              Positioned(
+                                bottom: 16 + bottomInset,
+                                right: 16 + rightInset,
+                                child: IconButton.filled(
+                                  onPressed: () {
+                                    setState(() {
+                                      _showFullscreenUtilities = true;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.more_horiz, size: 20),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: const Color(0xDD0F172A),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.all(12),
+                                  ),
+                                  tooltip: 'Utilities',
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ),
-              ),
+
+                // In Portrait mode, Utilities Dock is anchored at bottom of column
+                if (!_isFullscreen)
+                  SharedUtilitiesDock(
+                    transport: widget.source?.transport ?? WebSocketService(),
+                    onLeftClick: () => widget.source?.sendLeftClick(),
+                    onRightClick: () => widget.source?.sendRightClick(),
+                  ),
+              ],
             ),
-            const SizedBox(height: 16),
 
-            // Live Remote Screen Video Container + Touch Controller Layer
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final mapper = _mapper;
-                final containerSize = Size(constraints.maxWidth, 240);
-                final videoRect = mapper.calculateVideoRect(containerSize);
-
-                return Container(
-                  height: 240,
+            // Fullscreen OPEN State: Floating Overlay with Full Utilities + Toggle
+            if (_isFullscreen && _showFullscreenUtilities)
+              Positioned(
+                bottom: 16 + bottomInset,
+                left: 16 + leftInset,
+                right: 16 + rightInset,
+                child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blueAccent, width: 2),
+                    color: const Color(0xEE1E1E24),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white12, width: 1),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black54,
+                        blurRadius: 10,
+                      ),
+                    ],
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Video Decoder View Surface
-                      Positioned.fill(
-                        child: defaultTargetPlatform == TargetPlatform.android
-                            ? const AndroidView(
-                                viewType: 'pouse/remote_screen_view',
-                                creationParamsCodec: StandardMessageCodec(),
-                              )
-                            : const Center(
-                                child: Text('Android Only Platform View', style: TextStyle(color: Colors.white54)),
-                              ),
-                      ),
-
-                      // Touch Overlay Listener
-                      Positioned.fill(
-                        child: Listener(
-                          behavior: HitTestBehavior.opaque,
-                          onPointerDown: (e) => _onPointerDown(e, containerSize),
-                          onPointerMove: (e) => _onPointerMove(e, containerSize),
-                          onPointerUp: (e) => _onPointerUp(e, containerSize),
-                          onPointerCancel: _onPointerCancel,
-                          child: CustomPaint(
-                            size: containerSize,
-                            painter: _TouchOverlayPainter(
-                              videoRect: videoRect,
-                              lastAbsX: _lastAbsX,
-                              lastAbsY: _lastAbsY,
-                              isDragging: _isDragging,
-                              isOutsideTouch: _isOutsideTouch,
-                            ),
-                          ),
+                      // Header with Exit Fullscreen button
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF16161D),
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
                         ),
+                        child: Row(
+                          children: [
+                            const Text(
+                              'Fullscreen Utilities',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Spacer(),
+                            ElevatedButton.icon(
+                              onPressed: _exitFullscreen,
+                              icon: const Icon(Icons.fullscreen_exit, size: 16),
+                              label: const Text('Exit Fullscreen'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2A2A36),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SharedUtilitiesDock(
+                        transport: widget.source?.transport ?? WebSocketService(),
+                        onLeftClick: () => widget.source?.sendLeftClick(),
+                        onRightClick: () => widget.source?.sendRightClick(),
+                        initiallyExpanded: true,
+                        onToggle: () {
+                          setState(() {
+                            _showFullscreenUtilities = false;
+                          });
+                        },
                       ),
                     ],
                   ),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // Metrics Display Card
-            Card(
-              color: const Color(0xFF1E293B),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Video: $_videoState',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: _videoState == 'DECODING' ? Colors.greenAccent : Colors.amberAccent,
-                          ),
-                        ),
-                        ValueListenableBuilder<ConnectionStatus>(
-                          valueListenable: _controlWs.statusNotifier,
-                          builder: (context, status, _) {
-                            return Text(
-                              'Control WS: ${status.name.toUpperCase()}',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: status == ConnectionStatus.connected ? Colors.greenAccent : Colors.redAccent,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    const Divider(color: Colors.grey),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('WS RX FPS: ${_wsRxFps.toStringAsFixed(1)}', style: const TextStyle(color: Colors.white)),
-                        Text('Decoder Output FPS: ${_decoderFps.toStringAsFixed(1)}', style: const TextStyle(color: Colors.white)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Received: $_rxCount', style: const TextStyle(color: Colors.white70)),
-                        Text('Decoded: $_decodedCount', style: const TextStyle(color: Colors.white70)),
-                        Text('Dropped: $_droppedCount', style: const TextStyle(color: Colors.orangeAccent)),
-                      ],
-                    ),
-                    Text(
-                      'ABS_MOVE Target: ${_lastAbsX != null ? "x=${_lastAbsX!.toStringAsFixed(4)}, y=${_lastAbsY!.toStringAsFixed(4)}" : "None"}',
-                      style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 4),
-                    Text('ABS_MOVE Events Sent: $_absMoveCount', style: const TextStyle(color: Colors.white70)),
-                    Text('Last Gesture: $_lastGesture', style: const TextStyle(color: Colors.lightGreenAccent)),
-                    Text('Time to First Frame: ${_timeToFirstFrameMs >= 0 ? "${_timeToFirstFrameMs}ms" : "N/A"}',
-                        style: const TextStyle(color: Colors.cyanAccent)),
-                    Text('Forced IDR Recovery: ${_timeFromForcedIdrMs >= 0 ? "${_timeFromForcedIdrMs}ms" : "N/A"}',
-                        style: const TextStyle(color: Colors.cyanAccent)),
-                    if (_isOutsideTouch)
-                      Text('Last Touch: OUTSIDE VIDEO RECT (IGNORED)', style: TextStyle(color: Colors.amberAccent)),
-                    if (_lastError.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('Error: $_lastError', style: const TextStyle(color: Colors.redAccent)),
-                    ],
-                  ],
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Contextual Zoom HUD ([-] 2.0x [+] ⟳) + discrete scroll buttons (▲ ▼) when zoomed
+  Widget _buildZoomHud() {
+    final isZoomed = _zoomScale > 1.05;
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xDD0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isZoomed ? Colors.blueAccent.withValues(alpha: 0.6) : Colors.white12,
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Zoom Out Button [-]
+              IconButton(
+                onPressed: () => _adjustZoom(-0.5),
+                icon: const Icon(Icons.remove, size: 16),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFF1E293B),
+                ),
+                tooltip: 'Zoom Out',
+              ),
+              const SizedBox(width: 4),
+
+              // Zoom Scale Text
+              Container(
+                constraints: const BoxConstraints(minWidth: 44),
+                alignment: Alignment.center,
+                child: Text(
+                  '${_zoomScale.toStringAsFixed(1)}×',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+
+              // Zoom In Button [+]
+              IconButton(
+                onPressed: () => _adjustZoom(0.5),
+                icon: const Icon(Icons.add, size: 16),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFF1E293B),
+                ),
+                tooltip: 'Zoom In',
+              ),
+              const SizedBox(width: 4),
+
+              // Reset Zoom Button ⟳
+              IconButton(
+                onPressed: _resetZoomPan,
+                icon: const Icon(Icons.refresh, size: 16),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  foregroundColor: isZoomed ? Colors.blueAccent : Colors.white38,
+                  backgroundColor: const Color(0xFF1E293B),
+                ),
+                tooltip: 'Reset Zoom (1.0x)',
+              ),
+            ],
+          ),
+
+          // PC Scroll Arrow Controls (Short tap = 1 Arrow press, Hold = KEY_DOWN/KEY_UP)
+          if (isZoomed) ...[
+            const SizedBox(height: 4),
+            const Divider(color: Colors.white12, height: 1),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'PC Scroll',
+                  style: TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+                const SizedBox(width: 8),
+                _ArrowHoldButton(
+                  icon: Icons.arrow_drop_up,
+                  tooltip: 'Scroll Up',
+                  keyName: 'ArrowUp',
+                  source: widget.source,
+                  onHeldChanged: (key) {
+                    _activeHeldArrowKey = key;
+                  },
+                ),
+                const SizedBox(width: 8),
+                _ArrowHoldButton(
+                  icon: Icons.arrow_drop_down,
+                  tooltip: 'Scroll Down',
+                  keyName: 'ArrowDown',
+                  source: widget.source,
+                  onHeldChanged: (key) {
+                    _activeHeldArrowKey = key;
+                  },
+                ),
+              ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Helper widget for Zoomed PC Scroll arrow key controls (SHORT TAP = 1 key press, HOLD = KEY_DOWN, RELEASE = KEY_UP)
+class _ArrowHoldButton extends StatefulWidget {
+  final IconData icon;
+  final String tooltip;
+  final String keyName;
+  final RemoteScreenSource? source;
+  final ValueChanged<String?>? onHeldChanged;
+
+  const _ArrowHoldButton({
+    required this.icon,
+    required this.tooltip,
+    required this.keyName,
+    required this.source,
+    this.onHeldChanged,
+  });
+
+  @override
+  State<_ArrowHoldButton> createState() => _ArrowHoldButtonState();
+}
+
+class _ArrowHoldButtonState extends State<_ArrowHoldButton> {
+  bool _isHeld = false;
+
+  void _onHoldStart() {
+    if (!_isHeld) {
+      _isHeld = true;
+      widget.onHeldChanged?.call(widget.keyName);
+      widget.source?.sendKeyDown(widget.keyName);
+    }
+  }
+
+  void _onHoldEnd() {
+    if (_isHeld) {
+      _isHeld = false;
+      widget.onHeldChanged?.call(null);
+      widget.source?.sendKeyUp(widget.keyName);
+    }
+  }
+
+  @override
+  void dispose() {
+    _onHoldEnd();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (_) => _onHoldStart(),
+      onPointerUp: (_) => _onHoldEnd(),
+      onPointerCancel: (_) => _onHoldEnd(),
+      child: Tooltip(
+        message: widget.tooltip,
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _isHeld ? Colors.blueAccent : const Color(0xFF1E293B),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _isHeld ? Colors.white70 : Colors.white12,
+              width: 1,
+            ),
+          ),
+          child: Icon(widget.icon, size: 20, color: Colors.white),
         ),
       ),
     );
   }
 }
 
-/// Custom painter to visualize the 16:9 active video rectangle and touch cursor point
-class _TouchOverlayPainter extends CustomPainter {
-  final Rect videoRect;
-  final double? lastAbsX;
-  final double? lastAbsY;
-  final bool isDragging;
-  final bool isOutsideTouch;
+/// Custom Painter for displaying local touch indicator ⦿
+class _TouchIndicatorPainter extends CustomPainter {
+  final Rect fitRect;
+  final Offset? indicatorLocalPos;
 
-  _TouchOverlayPainter({
-    required this.videoRect,
-    required this.lastAbsX,
-    required this.lastAbsY,
-    required this.isDragging,
-    required this.isOutsideTouch,
+  _TouchIndicatorPainter({
+    required this.fitRect,
+    required this.indicatorLocalPos,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw subtle border around active 16:9 video content
-    final rectPaint = Paint()
-      ..color = Colors.cyan.withValues(alpha: 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+    if (indicatorLocalPos != null) {
+      final pos = indicatorLocalPos!;
 
-    canvas.drawRect(videoRect, rectPaint);
-
-    // Draw active touch indicator dot if inside
-    if (lastAbsX != null && lastAbsY != null) {
-      final touchX = videoRect.left + (lastAbsX! * videoRect.width);
-      final touchY = videoRect.top + (lastAbsY! * videoRect.height);
-
-      final dotPaint = Paint()
-        ..color = isDragging ? Colors.redAccent : Colors.greenAccent
+      final innerPaint = Paint()
+        ..color = Colors.cyanAccent
         ..style = PaintingStyle.fill;
+      canvas.drawCircle(pos, 5.0, innerPaint);
 
-      canvas.drawCircle(Offset(touchX, touchY), 8.0, dotPaint);
-
-      final ringPaint = Paint()
-        ..color = Colors.white.withValues(alpha: 0.8)
+      final outerPaint = Paint()
+        ..color = Colors.white.withValues(alpha: 0.85)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0;
-
-      canvas.drawCircle(Offset(touchX, touchY), 12.0, ringPaint);
+      canvas.drawCircle(pos, 11.0, outerPaint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _TouchOverlayPainter oldDelegate) {
-    return oldDelegate.videoRect != videoRect ||
-        oldDelegate.lastAbsX != lastAbsX ||
-        oldDelegate.lastAbsY != lastAbsY ||
-        oldDelegate.isDragging != isDragging ||
-        oldDelegate.isOutsideTouch != isOutsideTouch;
+  bool shouldRepaint(covariant _TouchIndicatorPainter oldDelegate) {
+    return oldDelegate.fitRect != fitRect ||
+        oldDelegate.indicatorLocalPos != indicatorLocalPos;
   }
 }

@@ -13,9 +13,11 @@ enum TouchpadGestureState {
   singleFingerMoving,
   potentialDoubleTapDrag,
   doubleTapDragging,
+  twoFingerUndecided,
   twoFingerTapCandidate,
   twoFingerScrolling,
   twoFingerHorizontalSwipe,
+  twoFingerMagnifying,
   threeFingerCandidate,
   fourFingerCandidate,
   gestureCompleted,
@@ -26,7 +28,7 @@ enum TouchpadGestureState {
 /// Decoupled from connection bar and app shell layout. Driven by [TouchpadSource].
 /// Supports 1-finger move, tap left click, double tap double-click,
 /// double-tap-and-drag text selection (BUTTON_DOWN -> MOVE -> BUTTON_UP),
-/// two-finger scroll with persisted sensitivity & direction controls, two-finger tap right click,
+/// two-finger pinch-to-system-magnification, two-finger scroll with persisted sensitivity & direction controls, two-finger tap right click,
 /// two-finger horizontal browser history navigation (Left -> Forward, Right -> Back),
 /// Windows 3-finger and 4-finger gestures, and unified utilities dock via [SharedUtilitiesDock].
 class TouchpadView extends StatefulWidget {
@@ -57,12 +59,17 @@ class _TouchpadViewState extends State<TouchpadView> {
   final Map<int, Offset> _pointerPositions = <int, Offset>{};
   final Map<int, Offset> _initialPointerDownPos = <int, Offset>{};
   Offset? _gestureStartFocalPoint;
-  Offset? _twoFingerStartFocalPoint;
   bool _gestureTriggered = false;
 
   // Touchpad Gesture State Machine variables
   TouchpadGestureState _gestureState = TouchpadGestureState.idle;
   Offset? _primaryDownPos;
+
+  // System Magnification State Tracking
+  double _currentMagnificationScale = 1.0;
+  double _baseMagnificationScale = 1.0;
+  double _initialInterFingerDistance = 0.0;
+  Offset _initialInterFingerMidpoint = Offset.zero;
 
   // Double-tap and Double-tap-and-drag state tracking
   DateTime? _lastTapUpTime;
@@ -115,6 +122,10 @@ class _TouchpadViewState extends State<TouchpadView> {
   @override
   void dispose() {
     _singleTapTimer?.cancel();
+    if (_currentMagnificationScale > 1.0) {
+      _currentMagnificationScale = 1.0;
+      _transport.sendSystemMagnify(1.0);
+    }
     super.dispose();
   }
 
@@ -167,12 +178,15 @@ class _TouchpadViewState extends State<TouchpadView> {
       _singleTapTimer?.cancel();
       _singleTapTimer = null;
       if (_gestureState != TouchpadGestureState.twoFingerScrolling &&
-          _gestureState != TouchpadGestureState.twoFingerHorizontalSwipe) {
-        _gestureState = TouchpadGestureState.twoFingerTapCandidate;
+          _gestureState != TouchpadGestureState.twoFingerHorizontalSwipe &&
+          _gestureState != TouchpadGestureState.twoFingerMagnifying) {
+        _gestureState = TouchpadGestureState.twoFingerUndecided;
         if (_pointerPositions.length == 2) {
           final p1 = _pointerPositions.values.elementAt(0);
           final p2 = _pointerPositions.values.elementAt(1);
-          _twoFingerStartFocalPoint = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
+          _initialInterFingerDistance = (p1 - p2).distance;
+          _initialInterFingerMidpoint = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
+          _baseMagnificationScale = _currentMagnificationScale;
         }
       }
     }
@@ -256,54 +270,65 @@ class _TouchpadViewState extends State<TouchpadView> {
           _transport.sendMove(dx, dy);
         }
       }
-    } else if (_maxPointerCount == 2 && _pointerCount == 2) {
-      if (_gestureState == TouchpadGestureState.twoFingerTapCandidate) {
-        // Check touch slop per finger against its own initial down position
-        bool exceededSlop = false;
-        for (final entry in _pointerPositions.entries) {
-          final initPos = _initialPointerDownPos[entry.key];
-          if (initPos != null && (entry.value - initPos).distance > 8.0) {
-            exceededSlop = true;
-            break;
-          }
-        }
+    } else if (_maxPointerCount == 2 && _pointerCount >= 2) {
+      if (_pointerPositions.length >= 2) {
+        final p1Key = _pointerPositions.keys.elementAt(0);
+        final p2Key = _pointerPositions.keys.elementAt(1);
+        final p1 = _pointerPositions[p1Key]!;
+        final p2 = _pointerPositions[p2Key]!;
+        final initP1 = _initialPointerDownPos[p1Key] ?? p1;
+        final initP2 = _initialPointerDownPos[p2Key] ?? p2;
 
-        if (exceededSlop) {
-          if (_twoFingerStartFocalPoint != null && _pointerPositions.length == 2) {
-            final p1 = _pointerPositions.values.elementAt(0);
-            final p2 = _pointerPositions.values.elementAt(1);
-            final currentFocal = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
-            final focalDelta = currentFocal - _twoFingerStartFocalPoint!;
+        final v1 = p1 - initP1;
+        final v2 = p2 - initP2;
+        final pinchComponent = (v1 - v2).distance;
+        final translationComponent = (v1 + v2).distance;
 
-            final isHorizontal = focalDelta.dx.abs() > focalDelta.dy.abs();
-            if (isHorizontal && focalDelta.dx.abs() >= 25.0) {
-              _gestureState = TouchpadGestureState.twoFingerHorizontalSwipe;
-              _gestureTriggered = true;
+        final currentDist = (p1 - p2).distance;
+        final currentMid = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
+
+        if (_gestureState == TouchpadGestureState.twoFingerUndecided ||
+            _gestureState == TouchpadGestureState.twoFingerTapCandidate) {
+          if (pinchComponent >= 12.0 || translationComponent >= 12.0) {
+            if (pinchComponent > 1.2 * translationComponent) {
+              _gestureState = TouchpadGestureState.twoFingerMagnifying;
               HapticFeedback.mediumImpact();
+            } else if (translationComponent > pinchComponent) {
+              final focalDelta = currentMid - _initialInterFingerMidpoint;
+              final isHorizontal = focalDelta.dx.abs() > focalDelta.dy.abs();
+              if (isHorizontal && focalDelta.dx.abs() >= 25.0) {
+                _gestureState = TouchpadGestureState.twoFingerHorizontalSwipe;
+                _gestureTriggered = true;
+                HapticFeedback.mediumImpact();
 
-              if (focalDelta.dx < 0) {
-                // Swipe Left -> Browser Forward
-                _transport.sendTwoFingerBrowserForward();
+                if (focalDelta.dx < 0) {
+                  _transport.sendTwoFingerBrowserForward();
+                } else {
+                  _transport.sendTwoFingerBrowserBack();
+                }
               } else {
-                // Swipe Right -> Browser Back
-                _transport.sendTwoFingerBrowserBack();
+                _gestureState = TouchpadGestureState.twoFingerScrolling;
               }
-            } else if (!isHorizontal) {
-              _gestureState = TouchpadGestureState.twoFingerScrolling;
             }
-          } else {
-            _gestureState = TouchpadGestureState.twoFingerScrolling;
           }
         }
-      }
 
-      if (_gestureState == TouchpadGestureState.twoFingerScrolling) {
-        // Two-finger scroll (Natural vs Reverse & Sensitivity)
-        final dirMultiplier = _isNaturalScroll ? 1.0 : -1.0;
-        final dx = delta.dx * 0.5 * _scrollSensitivity * dirMultiplier;
-        final dy = delta.dy * 0.5 * _scrollSensitivity * dirMultiplier;
-        if (dx.abs() > 0.1 || dy.abs() > 0.1) {
-          _transport.sendScroll(dx, dy);
+        if (_gestureState == TouchpadGestureState.twoFingerMagnifying) {
+          if (_initialInterFingerDistance > 0) {
+            final ratio = currentDist / _initialInterFingerDistance;
+            final targetScale = (_baseMagnificationScale * ratio).clamp(1.0, 4.0);
+            if ((targetScale - _currentMagnificationScale).abs() > 0.005) {
+              _currentMagnificationScale = targetScale;
+              _transport.sendSystemMagnify(targetScale);
+            }
+          }
+        } else if (_gestureState == TouchpadGestureState.twoFingerScrolling) {
+          final dirMultiplier = _isNaturalScroll ? 1.0 : -1.0;
+          final dx = delta.dx * 0.5 * _scrollSensitivity * dirMultiplier;
+          final dy = delta.dy * 0.5 * _scrollSensitivity * dirMultiplier;
+          if (dx.abs() > 0.1 || dy.abs() > 0.1) {
+            _transport.sendScroll(dx, dy);
+          }
         }
       }
     }
@@ -322,7 +347,6 @@ class _TouchpadViewState extends State<TouchpadView> {
         _maxPointerCount = 0;
         _gestureTriggered = false;
         _gestureStartFocalPoint = null;
-        _twoFingerStartFocalPoint = null;
         _primaryDownPos = null;
         _initialPointerDownPos.clear();
       }
@@ -356,7 +380,13 @@ class _TouchpadViewState extends State<TouchpadView> {
 
     _pointerCount = (_pointerCount > 0) ? _pointerCount - 1 : 0;
 
-    if (_gestureState == TouchpadGestureState.twoFingerTapCandidate &&
+    if (_gestureState == TouchpadGestureState.twoFingerMagnifying) {
+      if (_pointerCount == 0) {
+        _baseMagnificationScale = _currentMagnificationScale;
+        _gestureState = TouchpadGestureState.idle;
+      }
+    } else if ((_gestureState == TouchpadGestureState.twoFingerUndecided ||
+            _gestureState == TouchpadGestureState.twoFingerTapCandidate) &&
         _maxPointerCount == 2 &&
         _pointerCount == 0) {
       // Trigger Right Click only when both fingers are released without exceeding touch slop
@@ -369,7 +399,6 @@ class _TouchpadViewState extends State<TouchpadView> {
       _maxPointerCount = 0;
       _gestureTriggered = false;
       _gestureStartFocalPoint = null;
-      _twoFingerStartFocalPoint = null;
       _primaryDownPos = null;
       _initialPointerDownPos.clear();
     }
@@ -394,13 +423,16 @@ class _TouchpadViewState extends State<TouchpadView> {
       );
     }
 
+    if (_gestureState == TouchpadGestureState.twoFingerMagnifying && _pointerCount <= 1) {
+      _baseMagnificationScale = _currentMagnificationScale;
+    }
+
     _gestureState = TouchpadGestureState.idle;
     _singleTapTimer?.cancel();
     _pointerCount = 0;
     _maxPointerCount = 0;
     _gestureTriggered = false;
     _gestureStartFocalPoint = null;
-    _twoFingerStartFocalPoint = null;
     _primaryDownPos = null;
     _initialPointerDownPos.clear();
   }
@@ -452,7 +484,7 @@ class _TouchpadViewState extends State<TouchpadView> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '1 Finger Move • Tap Left Click • Double-Tap & Drag\n2 Finger Scroll • 2 Finger Tap Right Click\n3/4 Finger Windows Gestures',
+                        '1 Finger Move • Tap Left Click • Double-Tap & Drag\n2 Finger Pinch Magnify • 2 Finger Scroll • 2 Finger Tap Right Click\n3/4 Finger Windows Gestures',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.15),

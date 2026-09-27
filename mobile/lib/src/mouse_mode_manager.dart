@@ -5,6 +5,7 @@ import 'input_source.dart';
 enum MouseMode {
   touchpad,
   motion,
+  remoteScreen,
   touchless,
 }
 

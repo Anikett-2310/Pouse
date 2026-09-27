@@ -22,6 +22,7 @@ class WebSocketService implements PouseTransport {
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String? _currentIp;
   int _port = 8081;
+  String? _pairToken;
 
   // Button state tracking for safety
   bool _isLeftButtonDown = false;
@@ -38,13 +39,29 @@ class WebSocketService implements PouseTransport {
   @override
   bool get isConnected => _status == ConnectionStatus.connected;
 
-  Future<void> connect(String ip, {int port = 8081}) async {
+  String? get currentIp => _currentIp;
+  String? get pairToken => _pairToken;
+
+  void setPairToken(String? token) {
+    _pairToken = token?.trim();
+    if (isConnected && _pairToken != null && _pairToken!.isNotEmpty) {
+      sendEvent({
+        'event': 'AUTH',
+        'token': _pairToken,
+      });
+    }
+  }
+
+  Future<void> connect(String ip, {int port = 8081, String? pairToken}) async {
     if (_channel != null) {
       await disconnect();
     }
 
     _currentIp = ip.trim();
     _port = port;
+    if (pairToken != null && pairToken.trim().isNotEmpty) {
+      _pairToken = pairToken.trim();
+    }
     _setStatus(ConnectionStatus.connecting);
     errorNotifier.value = null;
 
@@ -63,6 +80,14 @@ class WebSocketService implements PouseTransport {
       await _channel!.ready.timeout(const Duration(seconds: 5));
 
       _setStatus(ConnectionStatus.connected);
+
+      // Authenticate over existing control connection if pairToken is present
+      if (_pairToken != null && _pairToken!.isNotEmpty) {
+        sendEvent({
+          'event': 'AUTH',
+          'token': _pairToken,
+        });
+      }
 
       _channel!.stream.listen(
         (message) {
@@ -260,8 +285,11 @@ class WebSocketService implements PouseTransport {
     });
   }
 
+  final Set<String> _heldKeys = {};
+
   @override
   void sendKeyDown(String key) {
+    _heldKeys.add(key);
     sendEvent({
       'event': 'KEY_DOWN',
       'key': key,
@@ -270,6 +298,7 @@ class WebSocketService implements PouseTransport {
 
   @override
   void sendKeyUp(String key) {
+    _heldKeys.remove(key);
     sendEvent({
       'event': 'KEY_UP',
       'key': key,
@@ -314,6 +343,14 @@ class WebSocketService implements PouseTransport {
   @override
   void sendFourFingerRight() {
     sendEvent({'event': 'FOUR_FINGER_RIGHT'});
+  }
+
+  @override
+  void sendSystemMagnify(double scale) {
+    sendEvent({
+      'event': 'SYSTEM_MAGNIFY',
+      'scale': scale,
+    });
   }
 
   static const MethodChannel _remoteScreenMethodChannel = MethodChannel('pouse/remote_screen/method');
@@ -382,16 +419,29 @@ class WebSocketService implements PouseTransport {
 
   @override
   void releaseAll() {
-    // Only release buttons that are actively recorded as held down
     if (_isLeftButtonDown) {
       sendButtonUp('left');
     }
     if (_isRightButtonDown) {
       sendButtonUp('right');
     }
+    for (final key in _heldKeys.toList()) {
+      sendKeyUp(key);
+    }
+    _heldKeys.clear();
+    sendSystemMagnify(1.0);
   }
 
+
   void _setStatus(ConnectionStatus newStatus) {
+    if (_status != newStatus) {
+      final now = DateTime.now().toIso8601String();
+      if (newStatus == ConnectionStatus.connected) {
+        debugPrint('[DIAGNOSTIC] [CONTROL_CONNECTED] timestamp=$now');
+      } else if (newStatus == ConnectionStatus.disconnected) {
+        debugPrint('[DIAGNOSTIC] [CONTROL_DISCONNECTED] timestamp=$now');
+      }
+    }
     _status = newStatus;
     statusNotifier.value = newStatus;
   }

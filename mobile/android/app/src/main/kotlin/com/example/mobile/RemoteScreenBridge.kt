@@ -101,6 +101,8 @@ class RemoteScreenBridge(
 
     private fun sendMetricsEvent(metrics: RemoteScreenMetrics) {
         val map = mapOf(
+            "sessionState" to session.state.name,
+            "decoderState" to metrics.state.name,
             "state" to metrics.state.name,
             "wsReceivedFps" to metrics.wsReceivedFps,
             "decoderOutputFps" to metrics.decoderOutputFps,
@@ -109,6 +111,12 @@ class RemoteScreenBridge(
             "framesDropped" to metrics.framesDropped,
             "timeToFirstDecodedFrameMs" to metrics.timeToFirstDecodedFrameMs,
             "timeFromForcedIdrMs" to metrics.timeFromForcedIdrMs,
+            "lastAndroidReceiveTimeMs" to metrics.lastAndroidReceiveTimeMs,
+            "lastCodecInputTimeMs" to metrics.lastCodecInputTimeMs,
+            "lastRenderedFrameTimeMs" to metrics.lastRenderedFrameTimeMs,
+            "isVideoWsConnected" to metrics.isVideoWsConnected,
+            "stallLogged" to metrics.stallLogged,
+            "uiState" to metrics.uiState,
             "lastError" to (metrics.lastError ?: "")
         )
         mainHandler.post {

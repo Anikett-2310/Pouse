@@ -67,12 +67,21 @@ class RemoteScreenSession private constructor() {
     }
 
     fun startSession(host: String, port: Int, pairToken: String) {
+        if (state == RemoteScreenState.CONNECTED ||
+            state == RemoteScreenState.STARTING_SCREEN ||
+            state == RemoteScreenState.CONNECTING_CONTROL) {
+            Log.d(TAG, "[SESSION] startSession called while already active in state ${state.name} - ignoring duplicate startSession")
+            currentSurface?.let { decoder.setSurface(it) }
+            return
+        }
+
         this.host = host
         this.port = port
         this.pairToken = pairToken
         this.screenSessionToken = null
+        this.videoReconnectAttempts = 0
 
-        Log.d(TAG, "[SESSION] Starting new RemoteScreenSession with pairToken=${redactToken(pairToken)}")
+        Log.d(TAG, "[DIAGNOSTIC] [SESSION_START] host=$host port=$port timestamp=${System.currentTimeMillis()}")
         updateState(RemoteScreenState.CONNECTING_CONTROL)
 
         // Send AUTH message over Control WS via Flutter callback
@@ -91,26 +100,33 @@ class RemoteScreenSession private constructor() {
             when (event) {
                 "AUTH_OK" -> {
                     Log.d(TAG, "[SESSION] AUTH_OK received from PC")
+                    val previousState = state
                     updateState(RemoteScreenState.AUTHENTICATED)
 
-                    if (screenSessionToken != null) {
-                        // Attempting RESUME_SCREEN
-                        Log.d(TAG, "[SESSION] Sending RESUME_SCREEN with sessionToken=${redactToken(screenSessionToken)}")
-                        val resumeMsg = JSONObject().apply {
-                            put("event", "RESUME_SCREEN")
-                            put("sessionToken", screenSessionToken)
-                        }.toString()
-                        sendControlMessage?.invoke(resumeMsg)
+                    // Only send START_SCREEN / RESUME_SCREEN if explicitly starting/reconnecting
+                    if (previousState == RemoteScreenState.CONNECTING_CONTROL ||
+                        previousState == RemoteScreenState.RECONNECTING_CONTROL) {
+                        if (screenSessionToken != null) {
+                            // Attempting RESUME_SCREEN
+                            Log.d(TAG, "[SESSION] Sending RESUME_SCREEN with sessionToken=${redactToken(screenSessionToken)}")
+                            val resumeMsg = JSONObject().apply {
+                                put("event", "RESUME_SCREEN")
+                                put("sessionToken", screenSessionToken)
+                            }.toString()
+                            sendControlMessage?.invoke(resumeMsg)
+                        } else {
+                            // Initial session creation: send START_SCREEN
+                            Log.d(TAG, "[SESSION] Sending START_SCREEN")
+                            updateState(RemoteScreenState.STARTING_SCREEN)
+                            val startMsg = JSONObject().apply {
+                                put("event", "START_SCREEN")
+                                put("width", 1920)
+                                put("height", 1080)
+                            }.toString()
+                            sendControlMessage?.invoke(startMsg)
+                        }
                     } else {
-                        // Initial session creation: send START_SCREEN
-                        Log.d(TAG, "[SESSION] Sending START_SCREEN")
-                        updateState(RemoteScreenState.STARTING_SCREEN)
-                        val startMsg = JSONObject().apply {
-                            put("event", "START_SCREEN")
-                            put("width", 1920)
-                            put("height", 1080)
-                        }.toString()
-                        sendControlMessage?.invoke(startMsg)
+                        Log.d(TAG, "[SESSION] AUTH_OK acknowledged in state $previousState - waiting for user to request Remote Screen")
                     }
                 }
                 "SCREEN_METADATA" -> {
@@ -164,24 +180,43 @@ class RemoteScreenSession private constructor() {
     }
 
     fun requestKeyframe() {
-        Log.d(TAG, "[SESSION] Requesting forced IDR keyframe over Control WS")
+        Log.d(TAG, "[DIAGNOSTIC] [KEYFRAME_REQUEST] timestamp=${System.currentTimeMillis()}")
         val msg = JSONObject().apply {
             put("event", "REQUEST_KEYFRAME")
         }.toString()
         sendControlMessage?.invoke(msg)
     }
 
-    fun handleVideoLoss() {
-        if (state == RemoteScreenState.STOPPED || state == RemoteScreenState.IDLE) return
-        Log.w(TAG, "[SESSION] Video WS connection lost. Entering RECONNECTING_VIDEO...")
-        updateState(RemoteScreenState.RECONNECTING_VIDEO)
+    private var videoReconnectAttempts = 0
+    private val MAX_VIDEO_RECONNECT_ATTEMPTS = 5
 
-        // Reset decoder and reconnect Video WS without tearing down control session
-        decoder.resetDecoder()
-        screenSessionToken?.let { token ->
-            decoder.start(host, port, token)
-            requestKeyframe()
+    fun resetReconnectAttempts() {
+        videoReconnectAttempts = 0
+    }
+
+    fun handleVideoLoss() {
+        if (state == RemoteScreenState.STOPPED || state == RemoteScreenState.IDLE || state == RemoteScreenState.ERROR) return
+
+        if (videoReconnectAttempts >= MAX_VIDEO_RECONNECT_ATTEMPTS) {
+            Log.e(TAG, "[SESSION] Max video reconnect attempts ($MAX_VIDEO_RECONNECT_ATTEMPTS) reached. Stopping reconnect loop.")
+            updateState(RemoteScreenState.ERROR, "Video connection failed after $MAX_VIDEO_RECONNECT_ATTEMPTS attempts")
+            return
         }
+
+        videoReconnectAttempts++
+        val delayMs = (1000L * (1 shl (videoReconnectAttempts - 1))).coerceAtMost(10000L)
+        Log.w(TAG, "[DIAGNOSTIC] [VIDEO_RECONNECT_START] attempt=$videoReconnectAttempts delayMs=$delayMs timestamp=${System.currentTimeMillis()}")
+        updateState(RemoteScreenState.RECONNECTING_VIDEO, "Reconnecting video ($videoReconnectAttempts/$MAX_VIDEO_RECONNECT_ATTEMPTS)...")
+
+        mainHandler.postDelayed({
+            if (state == RemoteScreenState.RECONNECTING_VIDEO) {
+                decoder.resetDecoder()
+                screenSessionToken?.let { token ->
+                    decoder.start(host, port, token)
+                    requestKeyframe()
+                }
+            }
+        }, delayMs)
     }
 
     fun handleControlLoss() {
@@ -192,18 +227,17 @@ class RemoteScreenSession private constructor() {
 
     fun onSurfaceCreated(surface: Surface) {
         this.currentSurface = surface
-        Log.d(TAG, "[SESSION] Surface created: $surface")
+        Log.d(TAG, "[DIAGNOSTIC] [SURFACE_CREATED] surface=$surface timestamp=${System.currentTimeMillis()}")
         decoder.setSurface(surface)
 
         if (state == RemoteScreenState.CONNECTED) {
-            // Re-create decoder & request IDR on Surface recreation
             Log.d(TAG, "[SESSION] Surface recreated during active session - requesting keyframe")
             requestKeyframe()
         }
     }
 
     fun onSurfaceDestroyed() {
-        Log.d(TAG, "[SESSION] Surface destroyed")
+        Log.d(TAG, "[DIAGNOSTIC] [SURFACE_DESTROYED] timestamp=${System.currentTimeMillis()}")
         this.currentSurface = null
         decoder.setSurface(null)
     }
@@ -226,7 +260,7 @@ class RemoteScreenSession private constructor() {
     }
 
     fun stopSession() {
-        Log.d(TAG, "[SESSION] User requested STOP_SCREEN")
+        Log.d(TAG, "[DIAGNOSTIC] [SESSION_STOP] timestamp=${System.currentTimeMillis()}")
         val stopMsg = JSONObject().apply {
             put("event", "STOP_SCREEN")
         }.toString()
@@ -237,6 +271,7 @@ class RemoteScreenSession private constructor() {
 
     private fun teardownSession() {
         Log.d(TAG, "[SESSION] Performing complete native teardown")
+        videoReconnectAttempts = 0
         decoder.stop()
         screenSessionToken = null
     }

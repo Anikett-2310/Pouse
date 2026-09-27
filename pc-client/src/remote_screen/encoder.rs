@@ -486,10 +486,11 @@ fn run_async_encoder_loop(
             let submit_start = Instant::now();
             if let Err(e) = unsafe { transform.ProcessInput(0, &input_sample, 0) } {
                 println!("[ASYNC ENCODER ERROR] ProcessInput error: {:?}", e);
+                force_next_keyframe = true;
             } else {
                 in_flight.push_back((f_num, qpc_ts, submit_start));
+                needed_inputs -= 1;
             }
-            needed_inputs -= 1;
         }
 
         // 3. Receive next command with 1ms timeout
@@ -950,6 +951,9 @@ fn create_dxgi_sample(texture: &ID3D11Texture2D, timestamp_qpc_100ns: i64) -> Re
     let buffer: IMFMediaBuffer = unsafe {
         MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, texture, 0, false)?
     };
+    if let Ok(max_len) = unsafe { buffer.GetMaxLength() } {
+        let _ = unsafe { buffer.SetCurrentLength(max_len) };
+    }
 
     let sample: IMFSample = unsafe { MFCreateSample()? };
 

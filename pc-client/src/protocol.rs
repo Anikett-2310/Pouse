@@ -54,6 +54,10 @@ pub enum PouseEvent {
     ThreeFingerRight,
     FourFingerLeft,
     FourFingerRight,
+    SystemMagnify {
+        #[serde(default = "default_scale")]
+        scale: f32,
+    },
     Ping,
     Pong,
 
@@ -104,6 +108,10 @@ fn default_auth_status() -> String {
 
 fn default_orientation() -> String {
     "landscape".to_string()
+}
+
+fn default_scale() -> f32 {
+    1.0
 }
 
 impl PouseEvent {
@@ -179,5 +187,15 @@ mod tests {
         assert_eq!(PouseEvent::parse(r#"{"event":"REQUEST_KEYFRAME"}"#).unwrap(), PouseEvent::RequestKeyframe);
         assert_eq!(PouseEvent::parse(r#"{"event":"SESSION_BUSY"}"#).unwrap(), PouseEvent::SessionBusy);
         assert_eq!(PouseEvent::parse(r#"{"event":"SESSION_EXPIRED"}"#).unwrap(), PouseEvent::SessionExpired);
+    }
+
+    #[test]
+    fn test_parse_system_magnify_event() {
+        let json = r#"{"event":"SYSTEM_MAGNIFY","scale":2.5}"#;
+        let event = PouseEvent::parse(json).unwrap();
+        match event {
+            PouseEvent::SystemMagnify { scale } => assert_eq!(scale, 2.5),
+            _ => panic!("Expected SystemMagnify event"),
+        }
     }
 }

@@ -1,0 +1,29 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile/src/mouse_mode_manager.dart';
+import 'package:mobile/src/sources/remote_screen_source.dart';
+import 'package:mobile/src/websocket_service.dart';
+
+void main() {
+  group('RemoteScreenSource Tests', () {
+    test('initial state and properties', () {
+      final wsService = WebSocketService();
+      final source = RemoteScreenSource(wsService);
+
+      expect(source.mode, MouseMode.remoteScreen);
+      expect(source.displayName, 'Remote Screen');
+      expect(source.isActive, isFalse);
+      expect(source.transport, wsService);
+    });
+
+    test('activation lifecycle callbacks toggle isActive', () {
+      final wsService = WebSocketService();
+      final source = RemoteScreenSource(wsService);
+
+      source.activate();
+      expect(source.isActive, isTrue);
+
+      source.deactivate();
+      expect(source.isActive, isFalse);
+    });
+  });
+}

@@ -85,6 +85,9 @@ class MockPouseTransport implements PouseTransport {
   void sendFourFingerRight() => log.add('nextDesktop');
 
   @override
+  void sendSystemMagnify(double scale) => log.add('systemMagnify');
+
+  @override
   void releaseAll() => log.add('releaseAll');
 }
 
