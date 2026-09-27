@@ -28,6 +28,9 @@ class MockSafetyTransport implements PouseTransport {
   void sendMove(double dx, double dy) => eventLog.add('MOVE');
 
   @override
+  void sendAbsMove(double x, double y) => eventLog.add('ABS_MOVE');
+
+  @override
   void sendLeftClick() => eventLog.add('LEFT_CLICK');
 
   @override

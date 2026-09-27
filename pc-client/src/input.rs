@@ -6,6 +6,7 @@ pub trait InputDriver {
     fn release_button(&mut self, button: Button);
     fn click_button(&mut self, button: Button);
     fn move_mouse(&mut self, x: i32, y: i32);
+    fn move_mouse_abs(&mut self, x: f32, y: f32);
     fn scroll(&mut self, amount: i32, axis: Axis);
     fn text(&mut self, text: &str);
     fn key(&mut self, key: Key);
@@ -61,6 +62,23 @@ impl InputDriver for EnigoDriver {
             self.last_log = std::time::Instant::now();
         }
         let _ = self.enigo.move_mouse(x, y, Coordinate::Rel);
+    }
+
+    fn move_mouse_abs(&mut self, x: f32, y: f32) {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        let clamped_x = x.clamp(0.0, 1.0);
+        let clamped_y = y.clamp(0.0, 1.0);
+        let target_x = (clamped_x * (screen_width - 1).max(1) as f32).round() as i32;
+        let target_y = (clamped_y * (screen_height - 1).max(1) as f32).round() as i32;
+
+        self.move_count += 1;
+        if self.last_log.elapsed().as_secs() >= 1 || self.move_count % 100 == 0 {
+            println!("[ENIGO DIAGNOSTIC] move_mouse_abs executed: count={} | norm=({:.3}, {:.3}) -> target=({}, {})", self.move_count, x, y, target_x, target_y);
+            self.last_log = std::time::Instant::now();
+        }
+        let _ = self.enigo.move_mouse(target_x, target_y, Coordinate::Abs);
     }
 
     fn scroll(&mut self, amount: i32, axis: Axis) {
@@ -250,6 +268,9 @@ impl<D: InputDriver> InputHandler<D> {
                     self.driver.move_mouse(ix, iy);
                 }
             }
+            PouseEvent::AbsMove { x, y } => {
+                self.driver.move_mouse_abs(x, y);
+            }
             PouseEvent::LeftClick => {
                 self.driver.click_button(Button::Left);
             }
@@ -356,7 +377,7 @@ impl<D: InputDriver> InputHandler<D> {
             PouseEvent::FourFingerRight => {
                 self.driver.next_virtual_desktop();
             }
-            PouseEvent::Ping | PouseEvent::Pong => {}
+            _ => {}
         }
     }
 }
@@ -390,6 +411,8 @@ mod tests {
         }
 
         fn move_mouse(&mut self, _x: i32, _y: i32) {}
+
+        fn move_mouse_abs(&mut self, _x: f32, _y: f32) {}
 
         fn scroll(&mut self, _amount: i32, _axis: Axis) {}
 

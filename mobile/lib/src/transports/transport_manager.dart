@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../websocket_service.dart';
 import 'bluetooth_hid_service.dart';
+import 'bluetooth_rfcomm_service.dart';
 import 'pouse_transport.dart';
 
 /// Central manager owning the active input transport selection (Wi-Fi or Bluetooth).
@@ -39,7 +40,7 @@ class TransportManager extends ChangeNotifier {
   /// Transactionally switches active transport (Wi-Fi <-> Bluetooth).
   ///
   /// Connects to [targetTransport] first. Only when [targetTransport] reaches
-  /// [ConnectionStatus.connected] does it release held state on the previous transport,
+  /// [ConnectionStatus.connected] or active state does it release held state on the previous transport,
   /// disconnect it, and swap [activeTransport].
   Future<bool> switchTransport(
     TransportType targetType, {
@@ -55,8 +56,12 @@ class TransportManager extends ChangeNotifier {
     if (targetType == activeType) {
       if (targetType == TransportType.wifi && hostIp != null) {
         await wifiTransport.connect(hostIp, port: wifiPort);
-      } else if (targetType == TransportType.bluetooth && btAddr != null && bluetoothTransport is BluetoothHidService) {
-        await (bluetoothTransport as BluetoothHidService).connect(btAddr);
+      } else if (targetType == TransportType.bluetooth) {
+        if (bluetoothTransport is BluetoothRfcommService) {
+          await (bluetoothTransport as BluetoothRfcommService).startServer();
+        } else if (bluetoothTransport is BluetoothHidService && btAddr != null) {
+          await (bluetoothTransport as BluetoothHidService).connect(btAddr);
+        }
       }
       return _activeTransport.status == ConnectionStatus.connected;
     }
@@ -70,16 +75,23 @@ class TransportManager extends ChangeNotifier {
     try {
       if (targetType == TransportType.wifi && hostIp != null) {
         await wifiTransport.connect(hostIp, port: wifiPort);
-      } else if (targetType == TransportType.bluetooth && btAddr != null && bluetoothTransport is BluetoothHidService) {
-        await (bluetoothTransport as BluetoothHidService).connect(btAddr);
+      } else if (targetType == TransportType.bluetooth) {
+        if (bluetoothTransport is BluetoothRfcommService) {
+          await (bluetoothTransport as BluetoothRfcommService).startServer();
+        } else if (bluetoothTransport is BluetoothHidService && btAddr != null) {
+          await (bluetoothTransport as BluetoothHidService).connect(btAddr);
+        }
       }
 
-      if (targetTransport.status == ConnectionStatus.connected) {
+      if (targetTransport.status == ConnectionStatus.connected ||
+          targetTransport.status == ConnectionStatus.connecting) {
         // Transactional swap: release held keys/buttons on old transport before disconnecting
         previousTransport.releaseAll();
         if (previousTransport is WebSocketService) {
           await previousTransport.disconnect();
         } else if (previousTransport is BluetoothHidService) {
+          await previousTransport.disconnect();
+        } else if (previousTransport is BluetoothRfcommService) {
           await previousTransport.disconnect();
         }
 

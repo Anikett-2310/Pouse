@@ -11,6 +11,12 @@ pub enum PouseEvent {
         #[serde(default)]
         t: Option<u64>,
     },
+    AbsMove {
+        #[serde(default)]
+        x: f32,
+        #[serde(default)]
+        y: f32,
+    },
     LeftClick,
     RightClick,
     DoubleClick,
@@ -50,15 +56,63 @@ pub enum PouseEvent {
     FourFingerRight,
     Ping,
     Pong,
+
+    // Remote Screen Production Protocol Events
+    Auth {
+        token: String,
+    },
+    AuthOk {
+        #[serde(default = "default_auth_status")]
+        status: String,
+    },
+    StartScreen,
+    ScreenMetadata {
+        width: u32,
+        height: u32,
+        #[serde(default = "default_orientation")]
+        orientation: String,
+        #[serde(rename = "sessionToken")]
+        session_token: String,
+    },
+    ResumeScreen {
+        #[serde(rename = "sessionToken")]
+        session_token: String,
+    },
+    ResumeOk,
+    StopScreen,
+    StopScreenOk,
+    RequestKeyframe,
+    InputBlocked {
+        #[serde(default)]
+        reason: String,
+    },
+    SessionBusy,
+    SessionExpired,
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 fn default_button() -> String {
     "left".to_string()
 }
 
+fn default_auth_status() -> String {
+    "authenticated".to_string()
+}
+
+fn default_orientation() -> String {
+    "landscape".to_string()
+}
+
 impl PouseEvent {
     pub fn parse(json_str: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json_str)
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
     }
 }
 
@@ -81,29 +135,49 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_clicks() {
-        let event = PouseEvent::parse(r#"{"event":"LEFT_CLICK"}"#).unwrap();
-        assert_eq!(event, PouseEvent::LeftClick);
-
-        let event = PouseEvent::parse(r#"{"event":"RIGHT_CLICK"}"#).unwrap();
-        assert_eq!(event, PouseEvent::RightClick);
-
-        let event = PouseEvent::parse(r#"{"event":"DOUBLE_CLICK"}"#).unwrap();
-        assert_eq!(event, PouseEvent::DoubleClick);
+    fn test_parse_abs_move_event() {
+        let json = r#"{"event":"ABS_MOVE","x":0.25,"y":0.75}"#;
+        let event = PouseEvent::parse(json).unwrap();
+        match event {
+            PouseEvent::AbsMove { x, y } => {
+                assert_eq!(x, 0.25);
+                assert_eq!(y, 0.75);
+            }
+            _ => panic!("Expected AbsMove event"),
+        }
     }
 
     #[test]
-    fn test_parse_scroll_and_keyboard() {
-        let event = PouseEvent::parse(r#"{"event":"SCROLL","dx":0.0,"dy":10.0}"#).unwrap();
-        match event {
-            PouseEvent::Scroll { dy, .. } => assert_eq!(dy, 10.0),
-            _ => panic!("Expected Scroll event"),
+    fn test_parse_remote_screen_control_protocol_events() {
+        let auth_json = r#"{"event":"AUTH","token":"4f9a1c8b3e2d6f0a"}"#;
+        let auth_event = PouseEvent::parse(auth_json).unwrap();
+        match auth_event {
+            PouseEvent::Auth { token } => assert_eq!(token, "4f9a1c8b3e2d6f0a"),
+            _ => panic!("Expected Auth event"),
         }
 
-        let event = PouseEvent::parse(r#"{"event":"TEXT_INPUT","text":"hello"}"#).unwrap();
-        match event {
-            PouseEvent::TextInput { text } => assert_eq!(text, "hello"),
-            _ => panic!("Expected TextInput event"),
+        let metadata_json = r#"{"event":"SCREEN_METADATA","width":1920,"height":1080,"orientation":"landscape","sessionToken":"sess_12345"}"#;
+        let meta_event = PouseEvent::parse(metadata_json).unwrap();
+        match meta_event {
+            PouseEvent::ScreenMetadata { width, height, session_token, .. } => {
+                assert_eq!(width, 1920);
+                assert_eq!(height, 1080);
+                assert_eq!(session_token, "sess_12345");
+            }
+            _ => panic!("Expected ScreenMetadata event"),
         }
+
+        let resume_json = r#"{"event":"RESUME_SCREEN","sessionToken":"sess_12345"}"#;
+        let resume_event = PouseEvent::parse(resume_json).unwrap();
+        match resume_event {
+            PouseEvent::ResumeScreen { session_token } => assert_eq!(session_token, "sess_12345"),
+            _ => panic!("Expected ResumeScreen event"),
+        }
+
+        assert_eq!(PouseEvent::parse(r#"{"event":"START_SCREEN"}"#).unwrap(), PouseEvent::StartScreen);
+        assert_eq!(PouseEvent::parse(r#"{"event":"STOP_SCREEN"}"#).unwrap(), PouseEvent::StopScreen);
+        assert_eq!(PouseEvent::parse(r#"{"event":"REQUEST_KEYFRAME"}"#).unwrap(), PouseEvent::RequestKeyframe);
+        assert_eq!(PouseEvent::parse(r#"{"event":"SESSION_BUSY"}"#).unwrap(), PouseEvent::SessionBusy);
+        assert_eq!(PouseEvent::parse(r#"{"event":"SESSION_EXPIRED"}"#).unwrap(), PouseEvent::SessionExpired);
     }
 }

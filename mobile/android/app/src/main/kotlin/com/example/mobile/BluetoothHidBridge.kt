@@ -1,5 +1,7 @@
 package com.example.mobile
 
+import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHidDevice
@@ -9,17 +11,23 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.abs
 
-class BluetoothHidBridge(private val context: Context) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
+class BluetoothHidBridge(
+    private val context: Context,
+    private val activity: Activity? = null
+) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     companion object {
         private const val TAG = "PouseBluetoothHid"
         const val METHOD_CHANNEL_NAME = "pouse/bluetooth_control"
         const val EVENT_CHANNEL_NAME = "pouse/bluetooth_status"
+        private const val REQUEST_CODE_BT_PERMISSIONS = 1001
 
         const val REPORT_ID_MOUSE = 1
         const val REPORT_ID_KEYBOARD = 2
@@ -88,6 +96,7 @@ class BluetoothHidBridge(private val context: Context) : MethodChannel.MethodCal
     private var connectedDevice: BluetoothDevice? = null
     private var eventSink: EventChannel.EventSink? = null
     private var isRegistered = false
+    private var pendingPermissionResult: MethodChannel.Result? = null
 
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -175,10 +184,22 @@ class BluetoothHidBridge(private val context: Context) : MethodChannel.MethodCal
                         context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
                 result.success(supported)
             }
+            "requestPermissions" -> {
+                val granted = checkAndRequestPermissions(result)
+                if (granted != null) {
+                    result.success(granted)
+                }
+            }
             "getPairedDevices" -> {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || bluetoothAdapter == null) {
                     result.success(emptyList<Map<String, String>>())
                     return
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        result.error("PERM_ERROR", "BLUETOOTH_CONNECT permission not granted", null)
+                        return
+                    }
                 }
                 try {
                     val pairedList = bluetoothAdapter?.bondedDevices?.map { dev ->
@@ -194,6 +215,12 @@ class BluetoothHidBridge(private val context: Context) : MethodChannel.MethodCal
                 if (address.isNullOrEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                     result.success(false)
                     return
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        result.success(false)
+                        return
+                    }
                 }
                 val hidDevice = hidDeviceProxy as? BluetoothHidDevice
                 val device = bluetoothAdapter?.getRemoteDevice(address)
@@ -235,6 +262,54 @@ class BluetoothHidBridge(private val context: Context) : MethodChannel.MethodCal
                 result.success(true)
             }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun checkAndRequestPermissions(result: MethodChannel.Result): Boolean? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val connectGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+
+            val scanGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_SCAN
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (connectGranted && scanGranted) {
+                return true
+            }
+
+            if (activity != null) {
+                pendingPermissionResult?.success(false)
+                pendingPermissionResult = result
+                ActivityCompat.requestPermissions(
+                    activity,
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN
+                    ),
+                    REQUEST_CODE_BT_PERMISSIONS
+                )
+                return null
+            } else {
+                return false
+            }
+        } else {
+            val btGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH
+            ) == PackageManager.PERMISSION_GRANTED
+            return btGranted
+        }
+    }
+
+    fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (requestCode == REQUEST_CODE_BT_PERMISSIONS) {
+            val allGranted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+            pendingPermissionResult?.success(allGranted)
+            pendingPermissionResult = null
         }
     }
 

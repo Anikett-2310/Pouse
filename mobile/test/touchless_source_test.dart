@@ -24,6 +24,9 @@ class MockPouseTransport implements PouseTransport {
   void sendMove(double dx, double dy) => log.add('move:$dx,$dy');
 
   @override
+  void sendAbsMove(double x, double y) => log.add('absMove:$x,$y');
+
+  @override
   void sendLeftClick() => log.add('leftClick');
 
   @override

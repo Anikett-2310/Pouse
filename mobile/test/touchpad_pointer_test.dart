@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/src/websocket_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Reconnection and MOVE Event Tests', () {
     test('sendMove does not throw and works across lifecycle states', () async {
       final service = WebSocketService();

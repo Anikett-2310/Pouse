@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/src/websocket_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('WebSocketService Tests', () {
     test('initial state is disconnected', () {
       final service = WebSocketService();

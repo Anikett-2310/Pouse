@@ -44,6 +44,9 @@ class MockPouseTransport implements PouseTransport {
   void sendMove(double dx, double dy) {}
 
   @override
+  void sendAbsMove(double x, double y) {}
+
+  @override
   void sendLeftClick() {
     leftClickCount++;
   }

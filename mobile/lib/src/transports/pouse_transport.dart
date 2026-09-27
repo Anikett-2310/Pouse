@@ -15,6 +15,7 @@ abstract class PouseTransport {
   bool get isConnected;
 
   void sendMove(double dx, double dy);
+  void sendAbsMove(double x, double y);
   void sendLeftClick();
   void sendRightClick();
   void sendDoubleClick();

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'transports/pouse_transport.dart';
 
@@ -12,6 +13,8 @@ enum ConnectionStatus {
 }
 
 class WebSocketService implements PouseTransport {
+  static const MethodChannel _wifiControlChannel = MethodChannel('pouse/wifi_control');
+
   @override
   TransportType get type => TransportType.wifi;
 
@@ -45,6 +48,15 @@ class WebSocketService implements PouseTransport {
     _setStatus(ConnectionStatus.connecting);
     errorNotifier.value = null;
 
+    // Explicitly bind Android process socket routing to physical Wi-Fi interface
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _wifiControlChannel.invokeMethod<bool>('bindWifiNetwork');
+      } catch (e) {
+        debugPrint('[WIFI_SERVICE] Wi-Fi network binding failed: $e');
+      }
+    }
+
     final uri = Uri.parse('ws://$_currentIp:$_port');
     try {
       _channel = WebSocketChannel.connect(uri);
@@ -72,13 +84,26 @@ class WebSocketService implements PouseTransport {
       _channel?.sink.close();
       _channel = null;
       _setStatus(ConnectionStatus.error);
-      errorNotifier.value = 'Connection timed out while reaching ws://$_currentIp:$_port';
+      await _checkWifiAndSetError('Connection timed out while reaching ws://$_currentIp:$_port');
     } catch (e) {
       _channel?.sink.close();
       _channel = null;
       _setStatus(ConnectionStatus.error);
-      errorNotifier.value = 'Failed to connect to ws://$_currentIp:$_port ($e)';
+      await _checkWifiAndSetError('Failed to connect to ws://$_currentIp:$_port ($e)');
     }
+  }
+
+  Future<void> _checkWifiAndSetError(String defaultError) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final bool? isWifiConnected = await _wifiControlChannel.invokeMethod<bool>('isWifiConnected');
+        if (isWifiConnected != true) {
+          errorNotifier.value = 'Wi-Fi connection unavailable';
+          return;
+        }
+      } catch (_) {}
+    }
+    errorNotifier.value = defaultError;
   }
 
   Future<void> disconnect() async {
@@ -87,6 +112,12 @@ class WebSocketService implements PouseTransport {
     _channel?.sink.close();
     _channel = null;
     _setStatus(ConnectionStatus.disconnected);
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await _wifiControlChannel.invokeMethod<bool>('unbindWifiNetwork');
+      } catch (_) {}
+    }
   }
 
   void sendEvent(Map<String, dynamic> event) {
@@ -128,6 +159,37 @@ class WebSocketService implements PouseTransport {
         'dx': dx,
         'dy': dy,
         't': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
+  }
+
+  double? _pendingAbsX;
+  double? _pendingAbsY;
+  bool _isAbsMoveScheduled = false;
+
+  @override
+  void sendAbsMove(double x, double y) {
+    _pendingAbsX = x;
+    _pendingAbsY = y;
+
+    if (!_isAbsMoveScheduled) {
+      _isAbsMoveScheduled = true;
+      scheduleMicrotask(_flushAbsMove);
+    }
+  }
+
+  void _flushAbsMove() {
+    _isAbsMoveScheduled = false;
+    final x = _pendingAbsX;
+    final y = _pendingAbsY;
+    _pendingAbsX = null;
+    _pendingAbsY = null;
+
+    if (x != null && y != null) {
+      sendEvent({
+        'event': 'ABS_MOVE',
+        'x': x,
+        'y': y,
       });
     }
   }
@@ -254,14 +316,67 @@ class WebSocketService implements PouseTransport {
     sendEvent({'event': 'FOUR_FINGER_RIGHT'});
   }
 
+  static const MethodChannel _remoteScreenMethodChannel = MethodChannel('pouse/remote_screen/method');
+
+  WebSocketService() {
+    _initRemoteScreenControlChannel();
+  }
+
+  void _initRemoteScreenControlChannel() {
+    try {
+      _remoteScreenMethodChannel.setMethodCallHandler((call) async {
+        if (call.method == 'sendControlMessage') {
+          final Map<dynamic, dynamic>? args = call.arguments as Map<dynamic, dynamic>?;
+          final String? jsonStr = args?['json'] as String?;
+          if (jsonStr != null && jsonStr.isNotEmpty) {
+            sendRawJson(jsonStr);
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('[WEBSOCKET_SERVICE] Could not initialize remote screen MethodChannel handler: $e');
+    }
+  }
+
+  void sendRawJson(String jsonStr) {
+    if (_status == ConnectionStatus.connected && _channel != null) {
+      try {
+        _channel!.sink.add(jsonStr);
+      } catch (e) {
+        debugPrint('Failed to send raw WebSocket text: $e');
+      }
+    }
+  }
+
   void _handleIncomingMessage(dynamic message) {
     try {
-      final data = jsonDecode(message as String);
-      if (data['event'] == 'PONG') {
-        debugPrint('Received PONG from PC client');
+      final text = message as String;
+      final data = jsonDecode(text);
+      if (data is Map<String, dynamic>) {
+        final event = data['event'];
+        if (event == 'PONG') {
+          debugPrint('Received PONG from PC client');
+        } else if (event == 'AUTH_OK' ||
+            event == 'SCREEN_METADATA' ||
+            event == 'RESUME_OK' ||
+            event == 'STOP_SCREEN_OK' ||
+            event == 'INPUT_BLOCKED' ||
+            event == 'SESSION_BUSY' ||
+            event == 'SESSION_EXPIRED' ||
+            event == 'ERROR') {
+          _forwardToNativeRemoteScreen(text);
+        }
       }
     } catch (e) {
       debugPrint('Error parsing message: $e');
+    }
+  }
+
+  void _forwardToNativeRemoteScreen(String jsonStr) {
+    try {
+      _remoteScreenMethodChannel.invokeMethod('onControlMessage', {'json': jsonStr});
+    } catch (e) {
+      debugPrint('Failed to forward control message to native: $e');
     }
   }
 

@@ -145,6 +145,9 @@ class BluetoothHidService implements PouseTransport {
   }
 
   @override
+  void sendAbsMove(double x, double y) {}
+
+  @override
   void sendLeftClick() {
     if (_status != ConnectionStatus.connected) return;
     _controlChannel.invokeMethod('sendMouseReport', {'button': 0x01, 'dx': 0, 'dy': 0, 'wheel': 0});

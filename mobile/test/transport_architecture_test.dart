@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/src/sources/motion_source.dart';
 import 'package:mobile/src/sources/touchpad_source.dart';
 import 'package:mobile/src/transports/bluetooth_hid_service.dart';
+import 'package:mobile/src/transports/bluetooth_rfcomm_service.dart';
 import 'package:mobile/src/transports/pouse_transport.dart';
 import 'package:mobile/src/transports/transport_manager.dart';
 import 'package:mobile/src/websocket_service.dart';
@@ -25,6 +26,9 @@ class MockPouseTransport implements PouseTransport {
 
   @override
   void sendMove(double dx, double dy) => log.add('move:$dx,$dy');
+
+  @override
+  void sendAbsMove(double x, double y) => log.add('absMove:$x,$y');
 
   @override
   void sendLeftClick() => log.add('leftClick');
@@ -91,6 +95,11 @@ void main() {
     test('WebSocketService implements PouseTransport', () {
       final ws = WebSocketService();
       expect(ws, isA<PouseTransport>());
+    });
+
+    test('BluetoothRfcommService implements PouseTransport', () {
+      final rfcomm = BluetoothRfcommService();
+      expect(rfcomm, isA<PouseTransport>());
     });
 
     test('BluetoothHidService implements PouseTransport', () {
