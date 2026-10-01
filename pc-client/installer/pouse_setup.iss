@@ -39,6 +39,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 UsedUserAreasWarning=no
+#ifdef SignTool
+SignTool={#SignTool}
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

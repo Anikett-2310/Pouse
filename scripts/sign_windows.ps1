@@ -40,7 +40,8 @@ $ResolvedPath = (Resolve-Path $FilePath).Path
 Write-Host "Target file: $ResolvedPath"
 
 # Locate signtool.exe
-$Signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue)?.Source
+$SigntoolCmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+$Signtool = if ($SigntoolCmd) { $SigntoolCmd.Source } else { $null }
 if (-not $Signtool) {
     # Check common Windows SDK locations
     $SdkPaths = @(
