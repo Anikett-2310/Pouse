@@ -131,6 +131,7 @@ impl<'a> BufferedRfcommReader<'a> {
     const READ_CHUNK: u32 = 256;
 
     fn new(reader: &'a DataReader) -> Self {
+        let _ = reader.SetInputStreamOptions(InputStreamOptions::Partial);
         Self { reader, buf: Vec::with_capacity(Self::READ_CHUNK as usize * 2), pos: 0 }
     }
 
@@ -329,17 +330,21 @@ fn handle_client_connection(socket: StreamSocket) {
     };
 
     let reader = match DataReader::CreateDataReader(&socket.InputStream().unwrap()) {
-        Ok(r) => r,
+        Ok(r) => {
+            let _ = r.SetInputStreamOptions(InputStreamOptions::Partial);
+            r
+        }
         Err(e) => {
             eprintln!("[RFCOMM] Error creating DataReader: {:?}", e);
             return;
         }
     };
 
-    // InputOwner is NOT acquired on socket accept.
-    // It is acquired only after POUSE_HELLO / POUSE_ACK handshake succeeds,
-    // which is the proxy for Android-side TOFU authorization completing.
-    // Until then the previous authorized transport (Wi-Fi or None) retains ownership.
+    // RFCOMM_CONNECTED != INPUT_AUTHORIZED invariant:
+    // InputOwner is NOT acquired on socket accept nor upon POUSE_HELLO/POUSE_ACK handshake.
+    // HELLO/ACK establishes only transport-layer connectivity.
+    // InputOwner is acquired strictly when the first authorized PouseEvent arrives,
+    // and released on disconnect only if that connection actually acquired it.
     let input_owner = InputOwner::global();
     let mut handshake_complete = false;
     let mut input_ownership_acquired = false;

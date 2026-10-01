@@ -135,25 +135,63 @@ fn main() -> Result<()> {
         println!("  Success Rate:      {:.2}%", (success_count as f64 / target_count as f64) * 100.0);
         println!("  Messages Lost:     {}", target_count - success_count);
 
+        let mut min_ms = 0.0;
+        let mut p50_ms = 0.0;
+        let mut p95_ms = 0.0;
+        let mut p99_ms = 0.0;
+        let mut max_ms = 0.0;
+        let mut avg_ms = 0.0;
+
         if !latencies.is_empty() {
             latencies.sort();
             let n = latencies.len();
-            let min_lat = latencies[0];
-            let max_lat = latencies[n - 1];
-            let p50_lat = latencies[(n as f64 * 0.50) as usize];
-            let p95_lat = latencies[(n as f64 * 0.95).min((n - 1) as f64) as usize];
-            let p99_lat = latencies[(n as f64 * 0.99).min((n - 1) as f64) as usize];
+            min_ms = latencies[0].as_secs_f64() * 1000.0;
+            max_ms = latencies[n - 1].as_secs_f64() * 1000.0;
+            p50_ms = latencies[(n as f64 * 0.50) as usize].as_secs_f64() * 1000.0;
+            p95_ms = latencies[(n as f64 * 0.95).min((n - 1) as f64) as usize].as_secs_f64() * 1000.0;
+            p99_ms = latencies[(n as f64 * 0.99).min((n - 1) as f64) as usize].as_secs_f64() * 1000.0;
             let total_us: u128 = latencies.iter().map(|d| d.as_micros()).sum();
-            let avg_us = total_us / n as u128;
+            avg_ms = (total_us as f64 / n as f64) / 1000.0;
 
-            println!("  Minimum RTT:       {:.2?}", min_lat);
-            println!("  p50 RTT (Median):  {:.2?}", p50_lat);
-            println!("  p95 RTT:           {:.2?}", p95_lat);
-            println!("  p99 RTT:           {:.2?}", p99_lat);
-            println!("  Maximum RTT:       {:.2?}", max_lat);
-            println!("  Average RTT:       {:.2} ms", avg_us as f64 / 1000.0);
+            println!("  Minimum RTT:       {:.2} ms", min_ms);
+            println!("  p50 RTT (Median):  {:.2} ms", p50_ms);
+            println!("  p95 RTT:           {:.2} ms", p95_ms);
+            println!("  p99 RTT:           {:.2} ms", p99_ms);
+            println!("  Maximum RTT:       {:.2} ms", max_ms);
+            println!("  Average RTT:       {:.2} ms", avg_ms);
         }
         println!("==================================================");
+
+        // 4. Save Persistent Machine-Readable JSON Result
+        let args: Vec<String> = std::env::args().collect();
+        let stage_label = if args.len() > 1 { &args[1] } else { "before_hid" };
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let json_payload = format!(
+            "{{\n  \"timestamp\": {},\n  \"git_commit\": \"f251618\",\n  \"stage\": \"{}\",\n  \"sample_count\": {},\n  \"acked_count\": {},\n  \"success_rate_pct\": {:.2},\n  \"min_rtt_ms\": {:.2},\n  \"p50_rtt_ms\": {:.2},\n  \"p95_rtt_ms\": {:.2},\n  \"p99_rtt_ms\": {:.2},\n  \"max_rtt_ms\": {:.2},\n  \"avg_rtt_ms\": {:.2},\n  \"status\": \"{}\"\n}}",
+            timestamp,
+            stage_label,
+            target_count,
+            success_count,
+            (success_count as f64 / target_count as f64) * 100.0,
+            min_ms,
+            p50_ms,
+            p95_ms,
+            p99_ms,
+            max_ms,
+            avg_ms,
+            if success_count == target_count { "PASS" } else { "PARTIAL" }
+        );
+
+        let out_dir = std::path::Path::new("tests/bluetooth/phase1/results");
+        let _ = std::fs::create_dir_all(out_dir);
+        let out_path = out_dir.join(format!("baseline_{}_{}.json", stage_label, timestamp));
+        if std::fs::write(&out_path, &json_payload).is_ok() {
+            println!("[RFCOMM] Baseline machine-readable test result saved to: {:?}", out_path);
+        }
 
         println!("[RFCOMM] test complete. Disconnecting cleanly...");
         let _ = socket.Close();

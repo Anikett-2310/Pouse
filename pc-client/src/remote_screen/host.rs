@@ -106,9 +106,10 @@ impl RemoteScreenHost {
             true
         } else {
             println!(
-                "[REMOTE_SCREEN_HOST] Peer {} auth failed with token: {}",
+                "[REMOTE_SCREEN_HOST] Peer {} auth failed with token: {} (full: {})",
                 peer,
-                redact_token(token)
+                redact_token(token),
+                token
             );
             false
         }

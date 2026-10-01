@@ -90,6 +90,27 @@ class MockSafetyTransport implements PouseTransport {
   }
 
   @override
+  void sendVolumeUp() => eventLog.add('VOLUME_UP');
+
+  @override
+  void sendVolumeDown() => eventLog.add('VOLUME_DOWN');
+
+  @override
+  void sendVolumeMute() => eventLog.add('VOLUME_MUTE');
+
+  @override
+  void sendBrightnessUp() => eventLog.add('BRIGHTNESS_UP');
+
+  @override
+  void sendBrightnessDown() => eventLog.add('BRIGHTNESS_DOWN');
+
+  @override
+  void sendWindowsSearch() => eventLog.add('WINDOWS_SEARCH');
+
+  @override
+  void sendTaskbarApps() => eventLog.add('TASKBAR_APPS');
+
+  @override
   void releaseAll() {
     eventLog.add('RELEASE_ALL');
   }

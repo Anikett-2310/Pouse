@@ -147,6 +147,9 @@ class WebSocketService implements PouseTransport {
 
   void sendEvent(Map<String, dynamic> event) {
     if (_status == ConnectionStatus.connected && _channel != null) {
+      if (event['event'] != 'MOVE' && (_pendingMoveDx != 0 || _pendingMoveDy != 0)) {
+        _flushMove();
+      }
       try {
         final jsonString = jsonEncode(event);
         _channel!.sink.add(jsonString);
@@ -352,6 +355,27 @@ class WebSocketService implements PouseTransport {
       'scale': scale,
     });
   }
+
+  @override
+  void sendVolumeUp() => sendEvent({'event': 'VOLUME_UP'});
+
+  @override
+  void sendVolumeDown() => sendEvent({'event': 'VOLUME_DOWN'});
+
+  @override
+  void sendVolumeMute() => sendEvent({'event': 'VOLUME_MUTE'});
+
+  @override
+  void sendBrightnessUp() => sendEvent({'event': 'BRIGHTNESS_UP'});
+
+  @override
+  void sendBrightnessDown() => sendEvent({'event': 'BRIGHTNESS_DOWN'});
+
+  @override
+  void sendWindowsSearch() => sendEvent({'event': 'WINDOWS_SEARCH'});
+
+  @override
+  void sendTaskbarApps() => sendEvent({'event': 'TASKBAR_APPS'});
 
   static const MethodChannel _remoteScreenMethodChannel = MethodChannel('pouse/remote_screen/method');
 

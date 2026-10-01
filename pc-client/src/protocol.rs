@@ -61,6 +61,15 @@ pub enum PouseEvent {
     Ping,
     Pong,
 
+    // Phase 5C Discrete OS Utility Controls
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
+    BrightnessUp,
+    BrightnessDown,
+    WindowsSearch,
+    TaskbarApps,
+
     // Remote Screen Production Protocol Events
     Auth {
         token: String,
@@ -197,5 +206,16 @@ mod tests {
             PouseEvent::SystemMagnify { scale } => assert_eq!(scale, 2.5),
             _ => panic!("Expected SystemMagnify event"),
         }
+    }
+
+    #[test]
+    fn test_parse_phase5c_discrete_events() {
+        assert_eq!(PouseEvent::parse(r#"{"event":"VOLUME_UP"}"#).unwrap(), PouseEvent::VolumeUp);
+        assert_eq!(PouseEvent::parse(r#"{"event":"VOLUME_DOWN"}"#).unwrap(), PouseEvent::VolumeDown);
+        assert_eq!(PouseEvent::parse(r#"{"event":"VOLUME_MUTE"}"#).unwrap(), PouseEvent::VolumeMute);
+        assert_eq!(PouseEvent::parse(r#"{"event":"BRIGHTNESS_UP"}"#).unwrap(), PouseEvent::BrightnessUp);
+        assert_eq!(PouseEvent::parse(r#"{"event":"BRIGHTNESS_DOWN"}"#).unwrap(), PouseEvent::BrightnessDown);
+        assert_eq!(PouseEvent::parse(r#"{"event":"WINDOWS_SEARCH"}"#).unwrap(), PouseEvent::WindowsSearch);
+        assert_eq!(PouseEvent::parse(r#"{"event":"TASKBAR_APPS"}"#).unwrap(), PouseEvent::TaskbarApps);
     }
 }

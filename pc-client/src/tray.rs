@@ -3,6 +3,7 @@ use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
@@ -58,7 +59,7 @@ impl SystemTray {
                 uID: 1,
                 uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
                 uCallbackMessage: WM_TRAY_CALLBACK,
-                hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+                hIcon: load_tray_icon(),
                 ..Default::default()
             };
 
@@ -213,7 +214,12 @@ fn check_for_updates_informational(hwnd: HWND) {
         let title = HSTRING::from("Pouse Update Check");
 
         // Inform user checking is in progress or query GitHub API
-        let client = std::process::Command::new("powershell")
+        #[cfg(windows)]
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("powershell");
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW flag prevents console pop-up
+        let client = cmd
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command",
                 "try { (Invoke-RestMethod -Uri 'https://api.github.com/repos/Anikett-2310/Pouse/releases/latest' -UserAgent 'PouseUpdateCheck').tag_name } catch { 'ERROR' }"])
             .output();
@@ -226,23 +232,34 @@ fn check_for_updates_informational(hwnd: HWND) {
 
         if latest_tag.is_empty() || latest_tag == "ERROR" {
             let msg = HSTRING::from(format!(
-                "Pouse version: v{}\nCould not reach GitHub Releases API.\nPlease check https://github.com/Anikett-2310/Pouse/releases manually.",
+                "Pouse v{}\n\nCould not connect to the update server to check for new releases.\n\nWould you like to open the official Pouse releases page in your browser?",
                 current_version
             ));
-            unsafe {
-                let _ = MessageBoxW(hwnd, PCWSTR(msg.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONINFORMATION);
+            let res = unsafe {
+                MessageBoxW(
+                    hwnd,
+                    PCWSTR(msg.as_ptr()),
+                    PCWSTR(title.as_ptr()),
+                    MB_YESNO | MB_ICONINFORMATION,
+                )
+            };
+            if res == IDYES {
+                let releases_url = "https://github.com/Anikett-2310/Pouse/releases";
+                let _ = std::process::Command::new("rundll32")
+                    .args(["url.dll,FileProtocolHandler", releases_url])
+                    .spawn();
             }
         } else {
             let clean_latest = latest_tag.trim_start_matches('v');
             if clean_latest > current_version {
                 let msg = HSTRING::from(format!(
-                    "A new version of Pouse is available!\n\nCurrent: v{}\nLatest:  {}\n\nClick OK to open the official release page in your browser.",
+                    "A new version of Pouse is available!\n\nCurrent version: v{}\nLatest version:  {}\n\nWould you like to open the official release page in your browser?",
                     current_version, latest_tag
                 ));
                 let res = unsafe {
-                    MessageBoxW(hwnd, PCWSTR(msg.as_ptr()), PCWSTR(title.as_ptr()), MB_OKCANCEL | MB_ICONINFORMATION)
+                    MessageBoxW(hwnd, PCWSTR(msg.as_ptr()), PCWSTR(title.as_ptr()), MB_YESNO | MB_ICONINFORMATION)
                 };
-                if res == IDOK {
+                if res == IDYES {
                     let url = format!("https://github.com/Anikett-2310/Pouse/releases/tag/{}", latest_tag);
                     let _ = std::process::Command::new("rundll32")
                         .args(["url.dll,FileProtocolHandler", &url])
@@ -250,7 +267,7 @@ fn check_for_updates_informational(hwnd: HWND) {
                 }
             } else {
                 let msg = HSTRING::from(format!(
-                    "You are running the latest version of Pouse (v{}).",
+                    "Pouse is up to date (v{}).\n\nYou are running the latest version.",
                     current_version
                 ));
                 unsafe {
@@ -259,4 +276,46 @@ fn check_for_updates_informational(hwnd: HWND) {
             }
         }
     });
+}
+
+unsafe fn load_tray_icon() -> HICON {
+    unsafe {
+        // 1. Try loading from compiled PE resource (Resource ID 2 is pouse-tray.ico)
+        if let Ok(hinstance) = GetModuleHandleW(None) {
+            if let Ok(handle) = LoadImageW(
+                hinstance,
+                PCWSTR(2 as *const u16),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTCOLOR,
+            ) {
+                let hicon = HICON(handle.0);
+                if !hicon.is_invalid() {
+                    return hicon;
+                }
+            }
+        }
+
+        // 2. Try loading directly from file if resource is unavailable
+        for path in ["assets/pouse-tray.ico", "../assets/pouse-tray.ico"] {
+            let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+            if let Ok(handle) = LoadImageW(
+                None,
+                PCWSTR(wide.as_ptr()),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_LOADFROMFILE | LR_DEFAULTCOLOR,
+            ) {
+                let hicon = HICON(handle.0);
+                if !hicon.is_invalid() {
+                    return hicon;
+                }
+            }
+        }
+
+        // 3. Fallback to standard application icon
+        LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
+    }
 }

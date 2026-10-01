@@ -10,10 +10,12 @@ import '../widgets/shared_utilities_dock.dart';
 /// Touchless sensitivity controls, and unified action dock via [SharedUtilitiesDock].
 class TouchlessView extends StatefulWidget {
   final TouchlessSource source;
+  final VoidCallback? onRemoteScreenShortcut;
 
   const TouchlessView({
     super.key,
     required this.source,
+    this.onRemoteScreenShortcut,
   });
 
   @override
@@ -264,6 +266,7 @@ class _TouchlessViewState extends State<TouchlessView> with WidgetsBindingObserv
                       _isUtilityPanelActive = isActive;
                     });
                   },
+                  onRemoteScreenShortcut: widget.onRemoteScreenShortcut,
                 ),
 
                 // Touchless Settings Controls (Collapses when Utility panel active)

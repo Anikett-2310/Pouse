@@ -45,10 +45,11 @@ class DiscoveredPousePc {
       identical(this, other) ||
       other is DiscoveredPousePc &&
           runtimeType == other.runtimeType &&
-          bleAddress == other.bleAddress;
+          ((classicAddress != null && other.classicAddress != null && classicAddress == other.classicAddress) ||
+           (bleAddress == other.bleAddress));
 
   @override
-  int get hashCode => bleAddress.hashCode;
+  int get hashCode => (classicAddress ?? bleAddress).hashCode;
 
   @override
   String toString() =>

@@ -307,6 +307,35 @@ class BluetoothHidService implements PouseTransport {
   void sendSystemMagnify(double scale) {}
 
   @override
+  void sendVolumeUp() {}
+
+  @override
+  void sendVolumeDown() {}
+
+  @override
+  void sendVolumeMute() {}
+
+  @override
+  void sendBrightnessUp() {}
+
+  @override
+  void sendBrightnessDown() {}
+
+  @override
+  void sendWindowsSearch() {
+    // Win + S (Win = 0x08, 's' = 0x16)
+    _sendKeyboardReport(0x08, [0x16]);
+    _sendKeyboardReport(0, []);
+  }
+
+  @override
+  void sendTaskbarApps() {
+    // Win + T (Win = 0x08, 't' = 0x17)
+    _sendKeyboardReport(0x08, [0x17]);
+    _sendKeyboardReport(0, []);
+  }
+
+  @override
   void releaseAll() {
     _heldButtonsMask = 0;
     _heldKeycodes.clear();

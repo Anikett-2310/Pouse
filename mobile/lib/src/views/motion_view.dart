@@ -12,10 +12,12 @@ import '../widgets/shared_utilities_dock.dart';
 /// Natural/Reverse scroll toggle, and unified utilities dock via [SharedUtilitiesDock].
 class MotionView extends StatefulWidget {
   final MotionSource source;
+  final VoidCallback? onRemoteScreenShortcut;
 
   const MotionView({
     super.key,
     required this.source,
+    this.onRemoteScreenShortcut,
   });
 
   @override
@@ -350,6 +352,7 @@ class _MotionViewState extends State<MotionView> with WidgetsBindingObserver {
                 HapticFeedback.lightImpact();
                 widget.source.sendRightClick();
               },
+              onRemoteScreenShortcut: widget.onRemoteScreenShortcut,
             ),
 
             // Motion Sensitivity Control Bar & Scroll Sensitivity Controls (Collapse when Utility panel active)

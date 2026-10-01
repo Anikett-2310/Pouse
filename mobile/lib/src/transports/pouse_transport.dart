@@ -41,5 +41,13 @@ abstract class PouseTransport {
 
   void sendSystemMagnify(double scale) {}
 
+  void sendVolumeUp() {}
+  void sendVolumeDown() {}
+  void sendVolumeMute() {}
+  void sendBrightnessUp() {}
+  void sendBrightnessDown() {}
+  void sendWindowsSearch() {}
+  void sendTaskbarApps() {}
+
   void releaseAll();
 }

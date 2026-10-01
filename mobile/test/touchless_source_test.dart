@@ -84,6 +84,27 @@ class MockPouseTransport implements PouseTransport {
   void sendSystemMagnify(double scale) => log.add('systemMagnify');
 
   @override
+  void sendVolumeUp() => log.add('volumeUp');
+
+  @override
+  void sendVolumeDown() => log.add('volumeDown');
+
+  @override
+  void sendVolumeMute() => log.add('volumeMute');
+
+  @override
+  void sendBrightnessUp() => log.add('brightnessUp');
+
+  @override
+  void sendBrightnessDown() => log.add('brightnessDown');
+
+  @override
+  void sendWindowsSearch() => log.add('windowsSearch');
+
+  @override
+  void sendTaskbarApps() => log.add('taskbarApps');
+
+  @override
   void releaseAll() => log.add('releaseAll');
 }
 

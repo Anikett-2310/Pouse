@@ -99,6 +99,27 @@ class MockTransport implements PouseTransport {
   void sendSystemMagnify(double scale) {}
 
   @override
+  void sendVolumeUp() {}
+
+  @override
+  void sendVolumeDown() {}
+
+  @override
+  void sendVolumeMute() {}
+
+  @override
+  void sendBrightnessUp() {}
+
+  @override
+  void sendBrightnessDown() {}
+
+  @override
+  void sendWindowsSearch() {}
+
+  @override
+  void sendTaskbarApps() {}
+
+  @override
   void releaseAll() {
     for (final k in heldKeys.toList()) {
       keyEvents.add('UP:$k');

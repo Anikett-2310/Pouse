@@ -1,11 +1,20 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
-    namespace = "com.example.mobile"
+    namespace = "com.pouse.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -16,7 +25,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.mobile"
+        applicationId = "com.pouse.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -29,11 +38,66 @@ android {
         versionName = flutter.versionName
     }
 
+    val isProductionReleaseRequested = (project.hasProperty("productionRelease") && project.property("productionRelease").toString().toBoolean()) ||
+        (project.hasProperty("releaseProduction") && project.property("releaseProduction").toString().toBoolean()) ||
+        System.getenv("POUSE_PRODUCTION_RELEASE")?.toBoolean() == true ||
+        System.getenv("RELEASE_PRODUCTION")?.toBoolean() == true
+
+    signingConfigs {
+        create("release") {
+            val keyAliasProp = keystoreProperties.getProperty("keyAlias")
+            val keyPasswordProp = keystoreProperties.getProperty("keyPassword")
+            val storeFileProp = keystoreProperties.getProperty("storeFile")
+            val storePasswordProp = keystoreProperties.getProperty("storePassword")
+
+            val storeFileObj = if (!storeFileProp.isNullOrEmpty()) {
+                val candidate = file(storeFileProp)
+                if (candidate.isAbsolute) candidate else rootProject.file(storeFileProp)
+            } else null
+
+            val isConfigured = !keyAliasProp.isNullOrEmpty() &&
+                !keyPasswordProp.isNullOrEmpty() &&
+                !storePasswordProp.isNullOrEmpty() &&
+                storeFileObj != null && storeFileObj.exists()
+
+            if (isConfigured) {
+                keyAlias = keyAliasProp
+                keyPassword = keyPasswordProp
+                storeFile = storeFileObj
+                storePassword = storePasswordProp
+            } else if (isProductionReleaseRequested) {
+                throw org.gradle.api.GradleException(
+                    """
+                    ================================================================================
+                    PRODUCTION RELEASE SIGNING FAILED:
+                    Production release mode was explicitly requested (-PproductionRelease=true or
+                    RELEASE_PRODUCTION=true), but valid release signing credentials were not found!
+
+                    Missing or invalid prerequisites:
+                    - key.properties present: ${keystorePropertiesFile.exists()}
+                    - storeFile valid: ${storeFileObj?.exists() ?: false}
+                    - keyAlias configured: ${!keyAliasProp.isNullOrEmpty()}
+
+                    Please copy key.properties.example to key.properties, fill in your production
+                    keystore credentials, and ensure the keystore file exists.
+                    ================================================================================
+                    """.trimIndent()
+                )
+            } else {
+                // Development / CI fallback: use debug keystore when key.properties is not supplied
+                logger.warn("WARNING: Building release variant with debug signing keys. Set -PproductionRelease=true or RELEASE_PRODUCTION=true to enforce production release signing.")
+                val debugConfig = getByName("debug")
+                keyAlias = debugConfig.keyAlias
+                keyPassword = debugConfig.keyPassword
+                storeFile = debugConfig.storeFile
+                storePassword = debugConfig.storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(

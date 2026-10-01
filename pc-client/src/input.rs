@@ -22,6 +22,14 @@ pub trait InputDriver {
     fn next_virtual_desktop(&mut self);
     fn browser_back(&mut self);
     fn browser_forward(&mut self);
+
+    fn volume_up(&mut self);
+    fn volume_down(&mut self);
+    fn volume_mute(&mut self);
+    fn brightness_up(&mut self);
+    fn brightness_down(&mut self);
+    fn windows_search(&mut self);
+    fn taskbar_apps(&mut self);
 }
 
 pub struct EnigoDriver {
@@ -83,6 +91,157 @@ fn send_windows_special_key(key: Key, direction: Direction) -> bool {
 
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     sent == 1
+}
+
+#[cfg(target_os = "windows")]
+fn send_windows_vk(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    };
+    let input_down = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let input_up = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[input_down, input_up], std::mem::size_of::<INPUT>() as i32) };
+    sent == 2
+}
+
+#[cfg(target_os = "windows")]
+fn send_windows_search() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_LWIN, VIRTUAL_KEY,
+    };
+    let vk_s = VIRTUAL_KEY(0x53); // 'S'
+    let down_win = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_LWIN,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let down_s = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk_s,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let up_s = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk_s,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let up_win = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_LWIN,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[down_win, down_s, up_s, up_win], std::mem::size_of::<INPUT>() as i32) };
+    sent == 4
+}
+
+#[cfg(target_os = "windows")]
+fn send_windows_taskbar_apps() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_LWIN, VIRTUAL_KEY,
+    };
+    let vk_t = VIRTUAL_KEY(0x54); // 'T' -> Win+T cycles/activates taskbar apps natively
+    let down_win = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_LWIN,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let down_t = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk_t,
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let up_t = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk_t,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let up_win = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_LWIN,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[down_win, down_t, up_t, up_win], std::mem::size_of::<INPUT>() as i32) };
+    sent == 4
 }
 
 impl InputDriver for EnigoDriver {
@@ -223,6 +382,39 @@ impl InputDriver for EnigoDriver {
         let _ = self.enigo.key(Key::Alt, Direction::Press);
         let _ = self.enigo.key(Key::RightArrow, Direction::Click);
         let _ = self.enigo.key(Key::Alt, Direction::Release);
+    }
+
+    fn volume_up(&mut self) {
+        #[cfg(target_os = "windows")]
+        send_windows_vk(windows::Win32::UI::Input::KeyboardAndMouse::VK_VOLUME_UP);
+    }
+
+    fn volume_down(&mut self) {
+        #[cfg(target_os = "windows")]
+        send_windows_vk(windows::Win32::UI::Input::KeyboardAndMouse::VK_VOLUME_DOWN);
+    }
+
+    fn volume_mute(&mut self) {
+        #[cfg(target_os = "windows")]
+        send_windows_vk(windows::Win32::UI::Input::KeyboardAndMouse::VK_VOLUME_MUTE);
+    }
+
+    fn brightness_up(&mut self) {
+        let _ = crate::display::adjust_brightness(10);
+    }
+
+    fn brightness_down(&mut self) {
+        let _ = crate::display::adjust_brightness(-10);
+    }
+
+    fn windows_search(&mut self) {
+        #[cfg(target_os = "windows")]
+        send_windows_search();
+    }
+
+    fn taskbar_apps(&mut self) {
+        #[cfg(target_os = "windows")]
+        send_windows_taskbar_apps();
     }
 }
 
@@ -445,6 +637,27 @@ impl<D: InputDriver> InputHandler<D> {
             PouseEvent::FourFingerRight => {
                 self.driver.next_virtual_desktop();
             }
+            PouseEvent::VolumeUp => {
+                self.driver.volume_up();
+            }
+            PouseEvent::VolumeDown => {
+                self.driver.volume_down();
+            }
+            PouseEvent::VolumeMute => {
+                self.driver.volume_mute();
+            }
+            PouseEvent::BrightnessUp => {
+                self.driver.brightness_up();
+            }
+            PouseEvent::BrightnessDown => {
+                self.driver.brightness_down();
+            }
+            PouseEvent::WindowsSearch => {
+                self.driver.windows_search();
+            }
+            PouseEvent::TaskbarApps => {
+                self.driver.taskbar_apps();
+            }
             _ => {}
         }
     }
@@ -531,6 +744,28 @@ mod tests {
 
         fn browser_forward(&mut self) {
             self.gestures.push("browser_forward");
+        }
+
+        fn volume_up(&mut self) {
+            self.gestures.push("volume_up");
+        }
+        fn volume_down(&mut self) {
+            self.gestures.push("volume_down");
+        }
+        fn volume_mute(&mut self) {
+            self.gestures.push("volume_mute");
+        }
+        fn brightness_up(&mut self) {
+            self.gestures.push("brightness_up");
+        }
+        fn brightness_down(&mut self) {
+            self.gestures.push("brightness_down");
+        }
+        fn windows_search(&mut self) {
+            self.gestures.push("windows_search");
+        }
+        fn taskbar_apps(&mut self) {
+            self.gestures.push("taskbar_apps");
         }
     }
 
@@ -736,6 +971,32 @@ mod tests {
         handler.handle_event(PouseEvent::KeyUp { key: "ArrowDown".to_string() });
         assert!(!handler.is_key_held("ArrowDown"));
         assert_eq!(handler.driver.released_keys, vec![Key::UpArrow, Key::DownArrow]);
+    }
+
+    #[test]
+    fn test_phase5c_discrete_events_dispatched_to_driver() {
+        let mut handler = InputHandler::with_driver(TestDriver::default());
+
+        handler.handle_event(PouseEvent::VolumeUp);
+        handler.handle_event(PouseEvent::VolumeDown);
+        handler.handle_event(PouseEvent::VolumeMute);
+        handler.handle_event(PouseEvent::BrightnessUp);
+        handler.handle_event(PouseEvent::BrightnessDown);
+        handler.handle_event(PouseEvent::WindowsSearch);
+        handler.handle_event(PouseEvent::TaskbarApps);
+
+        assert_eq!(
+            handler.driver.gestures,
+            vec![
+                "volume_up",
+                "volume_down",
+                "volume_mute",
+                "brightness_up",
+                "brightness_down",
+                "windows_search",
+                "taskbar_apps",
+            ]
+        );
     }
 }
 

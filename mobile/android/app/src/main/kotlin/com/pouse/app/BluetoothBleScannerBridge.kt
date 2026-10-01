@@ -122,6 +122,8 @@ class BluetoothBleScannerBridge(
             return false
         }
 
+        discoveredDevices.clear()
+
         // Check Location Services on Android 10/11
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
@@ -263,7 +265,6 @@ class BluetoothBleScannerBridge(
 
         var isMatchedPouse = false
         var classicBdAddr: String? = null
-        var deviceName = device.name ?: record?.deviceName ?: "Pouse PC"
 
         if (record != null) {
             // Check SparseArray Manufacturer Data
@@ -299,45 +300,85 @@ class BluetoothBleScannerBridge(
             }
         }
 
-        if (isMatchedPouse && (deviceName == "Pouse PC" || deviceName.isEmpty())) {
-            deviceName = "${device.name ?: "AXTPC"} (Pouse BLE)"
+        // Drop non-Pouse BLE advertisements immediately.
+        // Prevents non-Pouse BLE peripherals (fitness bands, earbuds, TVs, smartwatches) from flooding the UI as "Pouse PC".
+        if (!isMatchedPouse) {
+            val nonPouseName = device.name ?: record?.deviceName ?: "Unknown BLE Device"
+            Log.d(TAG, "[BLE_DIAG] action=DROPPED | BLE=$address | reason=non-Pouse BLE device | Name=$nonPouseName")
+            return
         }
 
-        // Deduplicate & update existing entry
-        val isNewDevice = !discoveredDevices.containsKey(address)
-        val deviceMap = discoveredDevices.getOrPut(address) { mutableMapOf() }
+        // Verify valid, non-zero 48-bit Classic BD_ADDR
+        val hasValidClassic = !classicBdAddr.isNullOrEmpty() && classicBdAddr != "00:00:00:00:00:00"
+        if (!hasValidClassic) {
+            Log.w(TAG, "[BLE_DIAG] action=DROPPED | BLE=$address | reason=zero or missing Classic BD_ADDR")
+            return
+        }
+
+        // Canonical identity is strictly the 48-bit Classic BD_ADDR
+        val canonicalKey = classicBdAddr!!
+
+        // Query Android Bluetooth adapter for the adapter-known name of this Classic BD_ADDR (e.g. "AXTPC")
+        val classicDevice = try {
+            bluetoothAdapter?.getRemoteDevice(canonicalKey)
+        } catch (e: Exception) {
+            null
+        }
+        val classicName = try {
+            classicDevice?.name
+        } catch (e: SecurityException) {
+            null
+        }
+
+        val rawName = when {
+            !classicName.isNullOrEmpty() -> classicName
+            !device.name.isNullOrEmpty() -> device.name
+            !record?.deviceName.isNullOrEmpty() -> record?.deviceName
+            else -> null
+        }
+
+        val deviceName = if (!rawName.isNullOrEmpty()) {
+            if (rawName.startsWith("Pouse PC", ignoreCase = true)) {
+                rawName
+            } else {
+                "Pouse PC ($rawName)"
+            }
+        } else {
+            "Pouse PC"
+        }
+
+        var action = "NEW"
+        // If an ephemeral entry was recorded under the BLE RPA before Classic resolution, migrate it
+        if (discoveredDevices.containsKey(address) && address != canonicalKey) {
+            discoveredDevices.remove(address)
+            action = "REPLACED"
+        } else if (discoveredDevices.containsKey(canonicalKey)) {
+            action = "MERGED"
+        }
+
+        val isNewDevice = (action == "NEW")
+        val deviceMap = discoveredDevices.getOrPut(canonicalKey) { mutableMapOf() }
         deviceMap["name"] = deviceName
         deviceMap["bleAddress"] = address
-        if (classicBdAddr != null) deviceMap["classicAddress"] = classicBdAddr
-        deviceMap["address"] = classicBdAddr ?: address
+        deviceMap["classicAddress"] = canonicalKey
+        deviceMap["address"] = canonicalKey
         deviceMap["rssi"] = rssi
-        deviceMap["matched"] = isMatchedPouse
+        deviceMap["matched"] = true
         deviceMap["timestamp"] = ts
 
-        Log.d(TAG, "[BLE] discovered LE address: $address")
-        if (!classicBdAddr.isNullOrEmpty()) {
-            Log.d(TAG, "[BLE] decoded Classic BD_ADDR: $classicBdAddr")
-        }
-
-        if (isMatchedPouse) {
-            Log.d(TAG, "[BLE] matched Pouse PC: $deviceName (Classic: $classicBdAddr, BLE: $address) | RSSI: $rssi dBm")
-        } else {
-            Log.d(TAG, "[BLE] duplicate advertisement ignored / updated: $deviceName ($address) | RSSI: $rssi")
-        }
+        Log.d(TAG, "[BLE_DIAG] action=$action | BLE=$address | Classic=$canonicalKey | MFR=POUSE_v1 | Name=$deviceName | RFCOMM_target=$canonicalKey | RSSI=$rssi dBm")
 
         val eventPayload = mutableMapOf<String, Any>(
             "event" to "pc_discovered",
             "name" to deviceName,
             "bleAddress" to address,
-            "address" to (classicBdAddr ?: address),
+            "classicAddress" to canonicalKey,
+            "address" to canonicalKey,
             "rssi" to rssi,
-            "matched" to isMatchedPouse,
+            "matched" to true,
             "isNew" to isNewDevice,
             "timestamp" to ts
         )
-        if (!classicBdAddr.isNullOrEmpty()) {
-            eventPayload["classicAddress"] = classicBdAddr
-        }
 
         emitEvent(eventPayload)
     }

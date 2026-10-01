@@ -50,6 +50,7 @@ class TransportManager extends ChangeNotifier {
     String? pairToken,
     String? btAddress,
     String? bluetoothDeviceAddress,
+    String? btName,
   }) async {
     final hostIp = ipAddress ?? wifiIp;
     final btAddr = btAddress ?? bluetoothDeviceAddress;
@@ -59,7 +60,12 @@ class TransportManager extends ChangeNotifier {
         await wifiTransport.connect(hostIp, port: wifiPort, pairToken: pairToken);
       } else if (targetType == TransportType.bluetooth) {
         if (bluetoothTransport is BluetoothRfcommService) {
-          await (bluetoothTransport as BluetoothRfcommService).startServer();
+          final rfcomm = bluetoothTransport as BluetoothRfcommService;
+          if (btAddr != null && btAddr.isNotEmpty) {
+            await rfcomm.connect(btAddr, name: btName);
+          } else {
+            await rfcomm.connectLastOrSaved();
+          }
         } else if (bluetoothTransport is BluetoothHidService && btAddr != null) {
           await (bluetoothTransport as BluetoothHidService).connect(btAddr);
         }
@@ -78,7 +84,12 @@ class TransportManager extends ChangeNotifier {
         await wifiTransport.connect(hostIp, port: wifiPort, pairToken: pairToken);
       } else if (targetType == TransportType.bluetooth) {
         if (bluetoothTransport is BluetoothRfcommService) {
-          await (bluetoothTransport as BluetoothRfcommService).startServer();
+          final rfcomm = bluetoothTransport as BluetoothRfcommService;
+          if (btAddr != null && btAddr.isNotEmpty) {
+            await rfcomm.connect(btAddr, name: btName);
+          } else {
+            await rfcomm.connectLastOrSaved();
+          }
         } else if (bluetoothTransport is BluetoothHidService && btAddr != null) {
           await (bluetoothTransport as BluetoothHidService).connect(btAddr);
         }
@@ -114,21 +125,7 @@ class TransportManager extends ChangeNotifier {
     }
   }
 
-  /// Forcefully selects active transport (for manual or direct mode selection).
-  void setActiveTransport(TransportType targetType) {
-    if (targetType == activeType) return;
 
-    final previousTransport = _activeTransport;
-    previousTransport.releaseAll();
-    previousTransport.statusNotifier.removeListener(_onActiveStatusChanged);
-
-    _activeTransport = (targetType == TransportType.wifi) ? wifiTransport : bluetoothTransport;
-    _activeTransport.statusNotifier.addListener(_onActiveStatusChanged);
-
-    activeTypeNotifier.value = targetType;
-    statusNotifier.value = _activeTransport.status;
-    notifyListeners();
-  }
 
   void releaseAll() {
     _activeTransport.releaseAll();

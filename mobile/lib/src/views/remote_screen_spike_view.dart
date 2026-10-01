@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../sources/remote_screen_source.dart';
+import '../transports/pouse_transport.dart';
 import '../utils/remote_screen_coordinate_mapper.dart';
 import '../websocket_service.dart';
 import '../widgets/shared_utilities_dock.dart';
@@ -26,11 +27,23 @@ class RemoteScreenSpikeView extends StatefulWidget {
   final String? initialHost;
   final ValueChanged<bool>? onFullscreenChanged;
 
+  /// Optional Wi-Fi transport reference.
+  ///
+  /// When the active control transport is Bluetooth, Remote Screen video
+  /// cannot be carried over RFCOMM. However, if [wifiTransport] is provided
+  /// and is currently connected, the view uses its IP for the video session
+  /// instead of showing a "Wi-Fi Required" banner.
+  ///
+  /// If [wifiTransport] is null or not connected when Bluetooth is active,
+  /// the "Wi-Fi Required" banner is shown.
+  final WebSocketService? wifiTransport;
+
   const RemoteScreenSpikeView({
     super.key,
     this.source,
     this.initialHost,
     this.onFullscreenChanged,
+    this.wifiTransport,
   });
 
   @override
@@ -104,6 +117,11 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
   String _uiState = 'CONNECTING';
   int _framesDecoded = 0;
 
+  /// True when the current transport is Bluetooth-only and cannot carry Remote
+  /// Screen video.  Set during [_autoStartSession]; causes a Wi-Fi info banner
+  /// to replace the stuck "CONNECTING" overlay.
+  bool _wifiRequired = false;
+
   void _listenMetrics() {
     _metricsSub = _eventChannel.receiveBroadcastStream().listen((dynamic event) {
       if (event is Map && mounted) {
@@ -135,6 +153,49 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
 
   Future<void> _autoStartSession() async {
     final transport = widget.source?.transport;
+    final wifiTransport = widget.wifiTransport;
+
+    // Remote Screen video is Wi-Fi only. RFCOMM Bluetooth does not have
+    // sufficient bandwidth for real-time screen streaming.
+    //
+    // However, if the user has Bluetooth connected for control AND Wi-Fi is
+    // also connected, we can use Wi-Fi for video while BT handles input.
+    // Only show the "Wi-Fi Required" banner when Wi-Fi is genuinely unavailable.
+    if (transport != null && transport.type == TransportType.bluetooth) {
+      // Check if Wi-Fi is available as a fallback video transport
+      final wifiConnected = wifiTransport != null &&
+          (wifiTransport.status == ConnectionStatus.connected ||
+              wifiTransport.status == ConnectionStatus.connecting);
+      final wifiIp = wifiTransport?.currentIp;
+
+      if (!wifiConnected || wifiIp == null || wifiIp.isEmpty) {
+        // Wi-Fi is not available — show the informational banner
+        if (mounted) {
+          setState(() {
+            _wifiRequired = true;
+            _uiState = 'WIFI_REQUIRED';
+          });
+        }
+        return;
+      }
+
+      // Wi-Fi IS available even though Bluetooth is the control transport.
+      // Use the Wi-Fi IP for the video session. This is the correct behaviour:
+      // BT carries control events, Wi-Fi carries video.
+      debugPrint('[REMOTE_SCREEN] BT control + Wi-Fi video mode: host=$wifiIp');
+      final pairToken = wifiTransport.pairToken ?? '';
+      try {
+        await _methodChannel.invokeMethod('startSession', {
+          'host': wifiIp,
+          'port': 8081,
+          'pairToken': pairToken,
+        });
+      } catch (e) {
+        debugPrint('[REMOTE_SCREEN] Error starting session (BT+WiFi mode): $e');
+      }
+      return;
+    }
+
     String host = '127.0.0.1';
     if (transport is WebSocketService &&
         transport.currentIp != null &&
@@ -565,34 +626,40 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
                           width: 8,
                           height: 8,
                           decoration: BoxDecoration(
-                            color: _uiState == 'LIVE'
-                                ? Colors.greenAccent
-                                : (_uiState == 'ERROR'
-                                    ? Colors.redAccent
-                                    : Colors.orangeAccent),
+                            color: _wifiRequired
+                                ? Colors.amberAccent
+                                : (_uiState == 'LIVE'
+                                    ? Colors.greenAccent
+                                    : (_uiState == 'ERROR'
+                                        ? Colors.redAccent
+                                        : Colors.orangeAccent)),
                             shape: BoxShape.circle,
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            _lastError.isNotEmpty
-                                ? 'ERROR: $_lastError'
-                                : (_uiState == 'LIVE'
-                                    ? 'LIVE • Remote Screen Active'
-                                    : (_uiState == 'WAITING_FOR_FIRST_FRAME'
-                                        ? 'WAITING_FOR_FIRST_FRAME • Initializing'
-                                        : (_uiState == 'VIDEO_CONNECTED'
-                                            ? 'VIDEO_CONNECTED • Waiting for Keyframe'
-                                            : (_uiState == 'VIDEO_STALLED'
-                                                ? 'VIDEO_STALLED • Recovering'
-                                                : (_uiState == 'RECONNECTING'
-                                                    ? 'RECONNECTING'
-                                                    : 'CONNECTING'))))),
+                            _wifiRequired
+                                ? 'Wi-Fi Required — Remote Screen needs Wi-Fi, not Bluetooth'
+                                : (_lastError.isNotEmpty
+                                    ? 'ERROR: $_lastError'
+                                    : (_uiState == 'LIVE'
+                                        ? 'LIVE • Remote Screen Active'
+                                        : (_uiState == 'WAITING_FOR_FIRST_FRAME'
+                                            ? 'WAITING_FOR_FIRST_FRAME • Initializing'
+                                            : (_uiState == 'VIDEO_CONNECTED'
+                                                ? 'VIDEO_CONNECTED • Waiting for Keyframe'
+                                                : (_uiState == 'VIDEO_STALLED'
+                                                    ? 'VIDEO_STALLED • Recovering'
+                                                    : (_uiState == 'RECONNECTING'
+                                                        ? 'RECONNECTING'
+                                                        : 'CONNECTING')))))),
                             style: TextStyle(
-                              color: _lastError.isNotEmpty || _uiState == 'ERROR'
-                                  ? Colors.redAccent
-                                  : Colors.white70,
+                              color: _wifiRequired
+                                  ? Colors.amberAccent
+                                  : (_lastError.isNotEmpty || _uiState == 'ERROR'
+                                      ? Colors.redAccent
+                                      : Colors.white70),
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
@@ -682,6 +749,70 @@ class _RemoteScreenSpikeViewState extends State<RemoteScreenSpikeView> {
                                 ),
                               ),
                             ),
+
+                            // Wi-Fi Required Banner (shown when Bluetooth is the active transport)
+                            if (_wifiRequired)
+                              Positioned.fill(
+                                child: Container(
+                                  color: const Color(0xCC0F172A),
+                                  child: Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.wifi_off_rounded,
+                                            size: 56,
+                                            color: Colors.amberAccent,
+                                          ),
+                                          const SizedBox(height: 16),
+                                          const Text(
+                                            'Wi-Fi Required',
+                                            style: TextStyle(
+                                              color: Colors.amberAccent,
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 12),
+                                          const Text(
+                                            'Remote Screen video cannot be streamed over Bluetooth. '
+                                            'Please connect to your Pouse PC via Wi-Fi to use this feature.',
+                                            style: TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 14,
+                                              height: 1.5,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 24),
+                                          OutlinedButton.icon(
+                                            onPressed: () {
+                                              setState(() {
+                                                _wifiRequired = false;
+                                                _uiState = 'CONNECTING';
+                                              });
+                                              _autoStartSession();
+                                            },
+                                            icon: const Icon(Icons.refresh, size: 18),
+                                            label: const Text('Retry with Wi-Fi'),
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: Colors.amberAccent,
+                                              side: const BorderSide(color: Colors.amberAccent, width: 1),
+                                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(10),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
 
                             // Portrait Mode Zoom HUD (top-right overlay)
                             if (!_isFullscreen)

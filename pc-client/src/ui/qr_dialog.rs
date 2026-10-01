@@ -28,12 +28,14 @@ pub fn show_qr_dialog() {
 
 fn run_qr_window() {
     unsafe {
+        let (h_icon_big, h_icon_sm) = load_app_icon();
         let class_name = HSTRING::from("PouseQRDialogClass");
         let wnd_class = WNDCLASSW {
             lpfnWndProc: Some(qr_wnd_proc),
             lpszClassName: PCWSTR(class_name.as_ptr()),
             hbrBackground: HBRUSH(6 as *mut _), // COLOR_WINDOW + 1 (white)
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: h_icon_big,
             ..Default::default()
         };
 
@@ -65,6 +67,9 @@ fn run_qr_window() {
             Ok(h) => h,
             Err(_) => return,
         };
+
+        let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(h_icon_big.0 as isize));
+        let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(h_icon_sm.0 as isize));
 
         QR_WINDOW_OPEN.store(true, Ordering::SeqCst);
         LAST_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
@@ -174,5 +179,75 @@ unsafe extern "system" fn qr_wnd_proc(
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+}
+
+pub(crate) unsafe fn load_app_icon() -> (HICON, HICON) {
+    unsafe {
+        let mut h_big = HICON::default();
+        let mut h_sm = HICON::default();
+
+        // 1. Try loading Resource 1 from compiled PE
+        if let Ok(hinstance) = windows::Win32::System::LibraryLoader::GetModuleHandleW(None) {
+            if let Ok(handle) = LoadImageW(
+                hinstance,
+                PCWSTR(1 as *const u16),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXICON),
+                GetSystemMetrics(SM_CYICON),
+                LR_DEFAULTCOLOR,
+            ) {
+                h_big = HICON(handle.0);
+            }
+            if let Ok(handle) = LoadImageW(
+                hinstance,
+                PCWSTR(1 as *const u16),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTCOLOR,
+            ) {
+                h_sm = HICON(handle.0);
+            }
+        }
+
+        // 2. Try loading from file assets/pouse.ico if resource not yet bound
+        if h_big.is_invalid() || h_big.0.is_null() {
+            for path in ["assets/pouse.ico", "../assets/pouse.ico"] {
+                let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+                if let Ok(handle) = LoadImageW(
+                    None,
+                    PCWSTR(wide.as_ptr()),
+                    IMAGE_ICON,
+                    GetSystemMetrics(SM_CXICON),
+                    GetSystemMetrics(SM_CYICON),
+                    LR_LOADFROMFILE | LR_DEFAULTCOLOR,
+                ) {
+                    h_big = HICON(handle.0);
+                }
+                if let Ok(handle) = LoadImageW(
+                    None,
+                    PCWSTR(wide.as_ptr()),
+                    IMAGE_ICON,
+                    GetSystemMetrics(SM_CXSMICON),
+                    GetSystemMetrics(SM_CYSMICON),
+                    LR_LOADFROMFILE | LR_DEFAULTCOLOR,
+                ) {
+                    h_sm = HICON(handle.0);
+                }
+                if !h_big.is_invalid() && !h_big.0.is_null() {
+                    break;
+                }
+            }
+        }
+
+        if h_big.is_invalid() || h_big.0.is_null() {
+            h_big = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        }
+        if h_sm.is_invalid() || h_sm.0.is_null() {
+            h_sm = h_big;
+        }
+
+        (h_big, h_sm)
     }
 }

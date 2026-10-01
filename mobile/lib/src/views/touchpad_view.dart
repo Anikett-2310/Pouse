@@ -33,10 +33,12 @@ enum TouchpadGestureState {
 /// Windows 3-finger and 4-finger gestures, and unified utilities dock via [SharedUtilitiesDock].
 class TouchpadView extends StatefulWidget {
   final TouchpadSource source;
+  final VoidCallback? onRemoteScreenShortcut;
 
   const TouchpadView({
     super.key,
     required this.source,
+    this.onRemoteScreenShortcut,
   });
 
   @override
@@ -77,6 +79,7 @@ class _TouchpadViewState extends State<TouchpadView> {
   Timer? _singleTapTimer;
 
   bool _isUtilityPanelActive = false;
+  double? _lastScrollStripY;
 
   PouseTransport get _transport => widget.source.transport;
 
@@ -441,59 +444,149 @@ class _TouchpadViewState extends State<TouchpadView> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Main Interactive Touchpad Surface
+        // Main Interactive Touchpad Surface with Dedicated Right-Edge Scrollbar
         Expanded(
-          child: Listener(
-            onPointerDown: _onPointerDown,
-            onPointerMove: _onPointerMove,
-            onPointerUp: _onPointerUp,
-            onPointerCancel: _onPointerCancel,
-            child: Container(
-              margin: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A22),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF2E2E3E), width: 1.5),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A22),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFF2E2E3E), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(19),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // LEFT ~85%: Normal Touchpad Surface
+                  Expanded(
+                    flex: 85,
+                    child: Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: _onPointerDown,
+                      onPointerMove: _onPointerMove,
+                      onPointerUp: _onPointerUp,
+                      onPointerCancel: _onPointerCancel,
+                      child: Container(
+                        color: Colors.transparent,
+                        child: Center(
+                          child: SingleChildScrollView(
+                            physics: const NeverScrollableScrollPhysics(),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.touch_app_outlined,
+                                  size: 46,
+                                  color: Colors.white.withValues(alpha: 0.15),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'TOUCHPAD SURFACE',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.22),
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 2.0,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '1-Finger Move • Tap Click • 2-Finger Scroll & Gestures',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.15),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Subtle Vertical Border/Divider separating 85% surface and 15% Scroll Zone
+                  Container(
+                    width: 1.5,
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+
+                  // RIGHT ~15%: Dedicated Interactive Scroll Zone
+                  Expanded(
+                    flex: 15,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragStart: (details) {
+                        _lastScrollStripY = details.localPosition.dy;
+                      },
+                      onVerticalDragUpdate: (details) {
+                        final currentY = details.localPosition.dy;
+                        final dy = currentY - (_lastScrollStripY ?? currentY);
+                        _lastScrollStripY = currentY;
+                        if (dy.abs() > 0.5) {
+                          final direction = _isNaturalScroll ? 1.0 : -1.0;
+                          final scrollDy = dy * direction * _scrollSensitivity * 2.5;
+                          _transport.sendScroll(0, scrollDy);
+                        }
+                      },
+                      onVerticalDragEnd: (_) {
+                        _lastScrollStripY = null;
+                      },
+                      onVerticalDragCancel: () {
+                        _lastScrollStripY = null;
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1E28).withValues(alpha: 0.6),
+                          border: Border(
+                            left: BorderSide(
+                              color: Colors.cyanAccent.withValues(alpha: 0.18),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.unfold_more,
+                              size: 22,
+                              color: Colors.cyanAccent.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(height: 8),
+                            RotatedBox(
+                              quarterTurns: 3,
+                              child: Text(
+                                'SCROLL ZONE',
+                                style: TextStyle(
+                                  color: Colors.cyanAccent.withValues(alpha: 0.45),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 2.0,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Icon(
+                              Icons.swap_vert,
+                              size: 18,
+                              color: Colors.cyanAccent.withValues(alpha: 0.35),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ],
-              ),
-              child: Center(
-                child: SingleChildScrollView(
-                  physics: const NeverScrollableScrollPhysics(),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.touch_app_outlined,
-                        size: 48,
-                        color: Colors.white.withValues(alpha: 0.15),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'TOUCHPAD SURFACE',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2.0,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '1 Finger Move • Tap Left Click • Double-Tap & Drag\n2 Finger Pinch Magnify • 2 Finger Scroll • 2 Finger Tap Right Click\n3/4 Finger Windows Gestures',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ),
             ),
           ),
@@ -507,6 +600,7 @@ class _TouchpadViewState extends State<TouchpadView> {
           },
           onLeftClick: () => _transport.sendLeftClick(),
           onRightClick: () => _transport.sendRightClick(),
+          onRemoteScreenShortcut: widget.onRemoteScreenShortcut,
         ),
 
         // Sliders Bar (Pointer Sensitivity + Scroll Sensitivity & Reverse)

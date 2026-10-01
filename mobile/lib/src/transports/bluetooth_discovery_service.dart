@@ -114,10 +114,12 @@ class BluetoothDiscoveryService {
 
   void _addOrUpdateDevice(DiscoveredPousePc device) {
     final currentList = List<DiscoveredPousePc>.from(discoveredDevicesNotifier.value);
-    final index = currentList.indexWhere((d) =>
-        (device.classicAddress != null && d.classicAddress == device.classicAddress) ||
-        d.bleAddress == device.bleAddress ||
-        d.address == device.address);
+    final index = currentList.indexWhere((d) {
+      if (device.classicAddress != null && d.classicAddress != null) {
+        return d.classicAddress == device.classicAddress;
+      }
+      return d.address == device.address || d.bleAddress == device.bleAddress;
+    });
 
     if (index >= 0) {
       currentList[index] = device;
@@ -141,6 +143,8 @@ class BluetoothDiscoveryService {
 
   Future<bool> startScan() async {
     try {
+      discoveredDevicesNotifier.value = [];
+      selectedPcNotifier.value = null;
       userMessageNotifier.value = 'Initiating BLE scan...';
       final bool? result = await _controlChannel.invokeMethod<bool>('startScan');
       return result == true;

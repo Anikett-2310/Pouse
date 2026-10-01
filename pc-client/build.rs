@@ -49,6 +49,7 @@ fn main() {
     {
         println!("cargo:rerun-if-changed=pouse.rc");
         println!("cargo:rerun-if-changed=assets/pouse.ico");
+        println!("cargo:rerun-if-changed=assets/pouse-tray.ico");
 
         if let Some(rc_exe) = find_rc_exe() {
             let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());

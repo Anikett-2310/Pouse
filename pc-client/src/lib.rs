@@ -1,7 +1,15 @@
+pub mod ble_advertiser;
+pub mod bluetooth_lifecycle;
 pub mod input;
+pub mod input_owner;
 pub mod magnifier;
 pub mod pairing;
 pub mod protocol;
 pub mod remote_screen;
 pub mod rfcomm;
+pub mod rfcomm_server;
 pub mod server;
+pub mod display;
+pub mod config;
+pub mod tray;
+pub mod ui;

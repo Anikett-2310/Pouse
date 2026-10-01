@@ -38,20 +38,22 @@ pub fn show_preferences_dialog() {
 
 fn run_preferences_window() {
     unsafe {
+        let (h_icon_big, h_icon_sm) = super::qr_dialog::load_app_icon();
         let class_name = HSTRING::from("PousePreferencesClass");
         let wnd_class = WNDCLASSW {
             lpfnWndProc: Some(pref_wnd_proc),
             lpszClassName: PCWSTR(class_name.as_ptr()),
             hbrBackground: HBRUSH(6 as *mut _), // COLOR_WINDOW + 1
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: h_icon_big,
             ..Default::default()
         };
 
         let _ = RegisterClassW(&wnd_class);
 
         let title = HSTRING::from("Pouse Preferences");
-        let width = 500;
-        let height = 560;
+        let width = 580;
+        let height = 570;
 
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -75,6 +77,9 @@ fn run_preferences_window() {
             Ok(h) => h,
             Err(_) => return,
         };
+
+        let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(h_icon_big.0 as isize));
+        let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(h_icon_sm.0 as isize));
 
         PREF_WINDOW_OPEN.store(true, Ordering::SeqCst);
         PREF_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
@@ -108,41 +113,41 @@ unsafe extern "system" fn pref_wnd_proc(
                 let btn_class = HSTRING::from("BUTTON");
                 let list_class = HSTRING::from("LISTBOX");
 
-                // 1. Device Name Input (Y = 20)
+                // 1. Device Name Input (Y = 18)
                 let name_hstr = HSTRING::from(&cfg.general.device_name);
                 let _ = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
                     PCWSTR(edit_class.as_ptr()),
                     PCWSTR(name_hstr.as_ptr()),
                     WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-                    160,
-                    20,
-                    290,
-                    24,
+                    140,
+                    18,
+                    390,
+                    26,
                     hwnd,
                     HMENU(ID_EDIT_NAME as _),
                     None,
                     None,
                 );
 
-                // 2. Show QR Button (Y = 55)
+                // 2. Show QR Button (Y = 54)
                 let show_qr_text = HSTRING::from("Show Connection QR Code...");
                 let _ = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
                     PCWSTR(btn_class.as_ptr()),
                     PCWSTR(show_qr_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE,
-                    160,
-                    55,
+                    310,
+                    54,
                     220,
-                    26,
+                    28,
                     hwnd,
                     HMENU(ID_BTN_SHOW_QR as _),
                     None,
                     None,
                 );
 
-                // 3. Startup Checkbox (Y = 90)
+                // 3. Startup Checkbox (Y = 94)
                 let chk_startup_text = HSTRING::from("Start Pouse automatically with Windows");
                 let chk_startup = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -150,8 +155,8 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR(chk_startup_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
                     30,
-                    90,
-                    350,
+                    94,
+                    500,
                     24,
                     hwnd,
                     HMENU(ID_CHK_STARTUP as _),
@@ -164,7 +169,7 @@ unsafe extern "system" fn pref_wnd_proc(
                     let _ = SendMessageW(chk_startup, BM_SETCHECK, WPARAM(1), LPARAM(0));
                 }
 
-                // 4. Compatible Input Mode Checkbox (Y = 120)
+                // 4. Compatible Input Mode Checkbox (Y = 124)
                 let chk_compat_text =
                     HSTRING::from("Compatible Input Mode (Standard SendInput fallback)");
                 let chk_compat = CreateWindowExW(
@@ -173,8 +178,8 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR(chk_compat_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
                     30,
-                    120,
-                    420,
+                    124,
+                    500,
                     24,
                     hwnd,
                     HMENU(ID_CHK_COMPAT_INPUT as _),
@@ -187,7 +192,7 @@ unsafe extern "system" fn pref_wnd_proc(
                     let _ = SendMessageW(chk_compat, BM_SETCHECK, WPARAM(1), LPARAM(0));
                 }
 
-                // 5. Recent Devices Listbox (Y = 175)
+                // 5. Recent Devices Listbox (Y = 178)
                 // Note: Strictly connection history only. Does not grant trust or input authorization.
                 let h_list = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -195,9 +200,9 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR::null(),
                     WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | WINDOW_STYLE(LBS_NOTIFY as u32),
                     30,
-                    175,
-                    420,
-                    80,
+                    178,
+                    500,
+                    85,
                     hwnd,
                     HMENU(ID_LIST_RECENT as _),
                     None,
@@ -216,7 +221,7 @@ unsafe extern "system" fn pref_wnd_proc(
                     }
                 }
 
-                // 6. Security: Wi-Fi Password Checkbox (Y = 280)
+                // 6. Security: Wi-Fi Password Checkbox (Y = 276)
                 let chk_pass_text = HSTRING::from("Require Wi-Fi Connection Password");
                 let chk_pass = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -224,8 +229,8 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR(chk_pass_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
                     30,
-                    280,
-                    300,
+                    276,
+                    500,
                     24,
                     hwnd,
                     HMENU(ID_CHK_WIFI_PASS as _),
@@ -238,7 +243,7 @@ unsafe extern "system" fn pref_wnd_proc(
                     let _ = SendMessageW(chk_pass, BM_SETCHECK, WPARAM(1), LPARAM(0));
                 }
 
-                // 7. Password Edit Field (Y = 310)
+                // 7. Password Edit Field (Y = 306)
                 let existing_pass = mgr.get_wifi_password().unwrap_or_default();
                 let pass_hstr = HSTRING::from(&existing_pass);
                 let _ = CreateWindowExW(
@@ -249,17 +254,17 @@ unsafe extern "system" fn pref_wnd_proc(
                         | WS_VISIBLE
                         | WS_BORDER
                         | WINDOW_STYLE((ES_PASSWORD | ES_AUTOHSCROLL) as u32),
-                    160,
-                    310,
-                    290,
-                    24,
+                    140,
+                    306,
+                    390,
+                    26,
                     hwnd,
                     HMENU(ID_EDIT_WIFI_PASS as _),
                     None,
                     None,
                 );
 
-                // 8. Reset Pairing Token Button (Y = 370)
+                // 8. Reset Pairing Token Button (Y = 372)
                 let reset_text = HSTRING::from("Reset Pairing Token");
                 let _ = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -267,8 +272,8 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR(reset_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE,
                     30,
-                    370,
-                    160,
+                    372,
+                    180,
                     30,
                     hwnd,
                     HMENU(ID_BTN_RESET_PAIRING as _),
@@ -276,17 +281,17 @@ unsafe extern "system" fn pref_wnd_proc(
                     None,
                 );
 
-                // 9. Save & Cancel Action Buttons (Y = 460)
+                // 9. Save & Cancel Action Buttons (Y = 470)
                 let save_text = HSTRING::from("Save");
                 let _ = CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
                     PCWSTR(btn_class.as_ptr()),
                     PCWSTR(save_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-                    270,
-                    460,
-                    90,
-                    30,
+                    320,
+                    470,
+                    100,
+                    32,
                     hwnd,
                     HMENU(ID_BTN_SAVE as _),
                     None,
@@ -299,10 +304,10 @@ unsafe extern "system" fn pref_wnd_proc(
                     PCWSTR(btn_class.as_ptr()),
                     PCWSTR(cancel_text.as_ptr()),
                     WS_CHILD | WS_VISIBLE,
-                    370,
-                    460,
-                    80,
-                    30,
+                    430,
+                    470,
+                    100,
+                    32,
                     hwnd,
                     HMENU(ID_BTN_CANCEL as _),
                     None,
@@ -325,17 +330,17 @@ unsafe extern "system" fn pref_wnd_proc(
                 let payload = crate::pairing::PairingPayload::new(8081, false);
                 let host_str = format!("Host / IP: {}:{}", payload.host, payload.port);
                 let host_w: Vec<u16> = host_str.encode_utf16().collect();
-                let _ = TextOutW(hdc, 30, 58, &host_w);
+                let _ = TextOutW(hdc, 30, 60, &host_w);
 
                 let recent_header: Vec<u16> =
                     "Recent Devices (UI History only — does not authorize input):"
                         .encode_utf16()
                         .collect();
-                let _ = TextOutW(hdc, 30, 155, &recent_header);
+                let _ = TextOutW(hdc, 30, 156, &recent_header);
 
                 // Security Labels
                 let lbl_pass: Vec<u16> = "Password:".encode_utf16().collect();
-                let _ = TextOutW(hdc, 30, 312, &lbl_pass);
+                let _ = TextOutW(hdc, 30, 310, &lbl_pass);
 
                 let note: Vec<u16> =
                     "Note: Password is encrypted with Windows DPAPI (zero plaintext storage)."
@@ -347,7 +352,7 @@ unsafe extern "system" fn pref_wnd_proc(
                     "Resetting disconnects currently paired devices."
                         .encode_utf16()
                         .collect();
-                let _ = TextOutW(hdc, 200, 376, &reset_hint);
+                let _ = TextOutW(hdc, 225, 378, &reset_hint);
 
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)

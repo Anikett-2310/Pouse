@@ -76,9 +76,19 @@ pub fn redact_token(token: &str) -> String {
 }
 
 pub fn get_or_create_pair_token(reset: bool) -> String {
-    let path = get_pairing_file_path();
+    let mgr = crate::config::ConfigManager::global();
+    if reset {
+        let new_token = generate_random_token();
+        mgr.set_pair_token(new_token.clone());
+        new_token
+    } else {
+        mgr.get_pair_token()
+    }
+}
+
+pub fn get_or_create_pair_token_at(path: &std::path::Path, reset: bool) -> String {
     if !reset && path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = fs::read_to_string(path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(token) = json.get("pairToken").and_then(|v| v.as_str()) {
                     if !token.trim().is_empty() {
@@ -94,7 +104,7 @@ pub fn get_or_create_pair_token(reset: bool) -> String {
         "pairToken": new_token
     });
     if let Ok(str_val) = serde_json::to_string_pretty(&payload_data) {
-        let _ = fs::write(&path, str_val);
+        let _ = fs::write(path, str_val);
     }
     new_token
 }
@@ -158,17 +168,23 @@ mod tests {
 
     #[test]
     fn test_persistent_pair_token_lifecycle() {
-        let token1 = get_or_create_pair_token(false);
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("pouse_test_pairing_{}.json", generate_random_token()));
+        let _ = fs::remove_file(&test_path);
+
+        let token1 = get_or_create_pair_token_at(&test_path, false);
         assert_eq!(token1.len(), 32);
 
         // Subsequent call returns same token
-        let token2 = get_or_create_pair_token(false);
+        let token2 = get_or_create_pair_token_at(&test_path, false);
         assert_eq!(token1, token2);
 
         // Reset pairing generates new token
-        let token3 = get_or_create_pair_token(true);
+        let token3 = get_or_create_pair_token_at(&test_path, true);
         assert_eq!(token3.len(), 32);
         assert_ne!(token1, token3);
+
+        let _ = fs::remove_file(&test_path);
     }
 
     #[test]

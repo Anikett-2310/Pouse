@@ -13,9 +13,40 @@ pub const BLE_MAGIC: &[u8] = b"POUSE";
 pub const BLE_PROTOCOL_VERSION: u8 = 1;
 
 /// Queries the local Bluetooth radio for its Classic BR/EDR hardware address (BD_ADDR).
-/// Returns 6 bytes in standard big-endian format (MSB to LSB, e.g. [0xD0, 0x65, 0x78, 0xA1, 0x0E, 0x18]
-/// corresponding to string "D0:65:78:A1:0E:18").
+/// Priority:
+/// 1. Modern WinRT BluetoothAdapter API (Windows 10 / Windows 11).
+/// 2. Legacy Win32 BluetoothFindFirstRadio fallback.
+///
+/// Safety invariant: Returns Some([u8; 6]) ONLY if the address is non-zero and valid.
+/// Returns None if no valid non-zero Classic BD_ADDR can be obtained.
 pub fn get_local_classic_bd_addr() -> Option<[u8; 6]> {
+    // 1. Try modern WinRT BluetoothAdapter API
+    if let Ok(op) = windows::Devices::Bluetooth::BluetoothAdapter::GetDefaultAsync() {
+        if let Ok(adapter) = op.get() {
+            if let Ok(addr_u64) = adapter.BluetoothAddress() {
+                if addr_u64 != 0 {
+                    let big_endian_addr = [
+                        ((addr_u64 >> 40) & 0xFF) as u8,
+                        ((addr_u64 >> 32) & 0xFF) as u8,
+                        ((addr_u64 >> 24) & 0xFF) as u8,
+                        ((addr_u64 >> 16) & 0xFF) as u8,
+                        ((addr_u64 >> 8) & 0xFF) as u8,
+                        (addr_u64 & 0xFF) as u8,
+                    ];
+                    if big_endian_addr.iter().any(|&b| b != 0) {
+                        println!(
+                            "[BLE] Classic BD_ADDR discovered via WinRT: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                            big_endian_addr[0], big_endian_addr[1], big_endian_addr[2],
+                            big_endian_addr[3], big_endian_addr[4], big_endian_addr[5]
+                        );
+                        return Some(big_endian_addr);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Legacy Win32 BluetoothFindFirstRadio fallback
     use windows::Win32::Devices::Bluetooth::{
         BluetoothFindFirstRadio, BluetoothGetRadioInfo, BluetoothFindRadioClose,
         BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_RADIO_INFO,
@@ -30,7 +61,7 @@ pub fn get_local_classic_bd_addr() -> Option<[u8; 6]> {
         let find_handle = match BluetoothFindFirstRadio(&params, &mut radio_handle) {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("[BLE] BluetoothFindFirstRadio failed: {:?}", e);
+                eprintln!("[BLE] Win32 BluetoothFindFirstRadio unavailable: {:?}", e);
                 return None;
             }
         };
@@ -49,19 +80,15 @@ pub fn get_local_classic_bd_addr() -> Option<[u8; 6]> {
             return None;
         }
 
-        // Win32 BLUETOOTH_ADDRESS stores the 48-bit address in rgBytes[0..6] as little-endian (rgBytes[0] = LSB).
-        // Standard network/MAC format is big-endian (byte 0 = MSB, e.g. D0, byte 5 = LSB, e.g. 18).
         let rg = info.address.Anonymous.rgBytes;
-        // Check if rgBytes is all zeros
         if rg.iter().all(|&b| b == 0) {
-            eprintln!("[BLE] Local radio returned all-zero BD_ADDR");
+            eprintln!("[BLE] Win32 radio returned all-zero BD_ADDR");
             return None;
         }
 
-        // Reorder from little-endian (rgBytes[0] = LSB) to big-endian (byte 0 = MSB)
         let big_endian_addr = [rg[5], rg[4], rg[3], rg[2], rg[1], rg[0]];
         println!(
-            "[BLE] Classic BD_ADDR discovered: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            "[BLE] Classic BD_ADDR discovered via Win32: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
             big_endian_addr[0], big_endian_addr[1], big_endian_addr[2],
             big_endian_addr[3], big_endian_addr[4], big_endian_addr[5]
         );
@@ -106,8 +133,14 @@ impl BleAdvertiser {
             return;
         }
 
-        // Query local Classic BD_ADDR
-        let classic_bd_addr = get_local_classic_bd_addr().unwrap_or([0u8; 6]);
+        // Query local Classic BD_ADDR - invariant: NEVER broadcast 00:00:00:00:00:00
+        let classic_bd_addr = match get_local_classic_bd_addr() {
+            Some(addr) if addr.iter().any(|&b| b != 0) => addr,
+            _ => {
+                eprintln!("[BLE] advertiser aborted: Refusing to broadcast with invalid or all-zero Classic BD_ADDR.");
+                return;
+            }
+        };
 
         // Payload format: MAGIC ("POUSE" - 5 bytes) + PROTOCOL_VERSION (0x01 - 1 byte) + Classic BD_ADDR (6 bytes big-endian)
         let writer = match DataWriter::new() {
@@ -171,6 +204,7 @@ impl BleAdvertiser {
             eprintln!("[BLE] publisher error: Failed to append manufacturer data: {:?}", e);
             return;
         }
+
 
         // StatusChanged handler for diagnostic logging
         let status_token = publisher.StatusChanged(&TypedEventHandler::new(
@@ -254,11 +288,26 @@ mod tests {
 
     #[test]
     fn test_local_classic_bd_addr_query() {
-        // Query local hardware radio - should succeed on Windows test machine with Bluetooth
         if let Some(addr) = get_local_classic_bd_addr() {
-            println!("Local Classic BD_ADDR found: {:?}", addr);
-            assert!(addr.iter().any(|&b| b != 0), "BD_ADDR should not be all zeros");
+            println!("Discovered non-zero Classic BD_ADDR: {:?}", addr);
+            assert_eq!(addr.len(), 6);
+            assert!(addr.iter().any(|&b| b != 0), "Classic BD_ADDR must NEVER be all zeros");
+        } else {
+            println!("No local Bluetooth radio available in this test environment");
         }
+    }
+
+    #[test]
+    fn test_advertiser_start_live() {
+        let mut advertiser = BleAdvertiser::new();
+        advertiser.start();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(advertiser.publisher.is_some(), "Publisher should be started");
+        if let Some(ref pub_obj) = advertiser.publisher {
+            let status = pub_obj.Status().unwrap_or_default();
+            println!("Publisher status after 500ms: {:?}", status);
+        }
+        advertiser.stop();
     }
 }
 
