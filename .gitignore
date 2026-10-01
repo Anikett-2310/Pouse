@@ -1,11 +1,31 @@
 # Rust build artifacts
 /pc-client/target/
 **/target/
+/pc-client/target_t/
 
 # IDE & Editor files
 .vscode/
 .idea/
 *.swp
 
-# Stray temporary files
+# Root-level diagnostic / regression test artifacts (screenshots, UI dumps, logs)
+/*.png
+/*.xml
+/*.log
+/*.zip
 /e
+
+# Android keystore & credentials (never commit signing keys or property secrets)
+*.jks
+*.keystore
+key.properties
+*.pfx
+*.p12
+*.cer
+*.crt
+
+# Windows installer / packaging output
+/pc-client/installer/Output/
+*.msi
+*.aab
+*.apk

@@ -1,6 +1,6 @@
 [package]
 name = "pc-client"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
@@ -11,10 +11,12 @@ serde_json = "1.0"
 futures-util = "0.3"
 enigo = "0.3"
 qr2term = "0.3"
+qrcode = "0.14"
 windows = { version = "0.58", features = [
     "Foundation",
     "Foundation_Collections",
     "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
     "Devices_Bluetooth_Rfcomm",
     "Devices_Enumeration",
     "Networking_Sockets",
@@ -40,6 +42,12 @@ windows = { version = "0.58", features = [
     "Win32_System_WinRT_Graphics_Capture",
     "Win32_Security_Cryptography",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_Networking_WinSock",
+    "Win32_Devices_Bluetooth",
 ] }
 

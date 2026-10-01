@@ -1,0 +1,16 @@
+# Pouse Android Production Signing Configuration Template
+# -------------------------------------------------------------
+# To sign production APK/AAB builds locally or in CI:
+# 1. Copy this file to: mobile/android/key.properties
+# 2. Fill in the parameters with your production keystore details.
+# 3. Ensure the keystore file exists at the specified relative or absolute path.
+#
+# IMPORTANT:
+# - NEVER commit key.properties or *.jks / *.keystore files to git.
+# - In CI environments, populate key.properties dynamically from secure secrets.
+# - If key.properties is absent, the build automatically falls back to debug signing.
+
+keyAlias=pouse_release
+keyPassword=YOUR_KEY_PASSWORD
+storeFile=pouse-release-key.jks
+storePassword=YOUR_STORE_PASSWORD
