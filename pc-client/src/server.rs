@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::input::InputHandler;
+use crate::input_owner::{InputOwner, TransportType};
 use crate::pairing::redact_token;
 use crate::protocol::PouseEvent;
 use crate::remote_screen::host::{InputPermission, RemoteScreenHost, ResumeResult, StartResult};
@@ -45,9 +45,12 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         println!("New connection attempt from: {}", peer_addr);
         tokio::spawn(async move {
             if let Err(e) = handle_connection(stream, peer_addr).await {
-                eprintln!("Connection error from {}: {}", peer_addr, e);
+                // A TCP reset (wsarecv/ECONNABORTED) is a routine abrupt disconnect —
+                // treat it as informational rather than an error.
+                println!("[WS] Connection from {} ended: {}", peer_addr, e);
+            } else {
+                println!("[WS] Connection closed cleanly: {}", peer_addr);
             }
-            println!("Connection closed: {}", peer_addr);
         });
     }
 
@@ -137,7 +140,7 @@ async fn handle_video_connection(
                     Ok(access_unit) => {
                         let msg = Message::Binary(access_unit.into());
                         if let Err(e) = ws_sender.send(msg).await {
-                            eprintln!("[VIDEO WEBSOCKET] Send error to {}: {}", peer_addr, e);
+                            println!("[VIDEO WS] Peer {} disconnected during stream: {}", peer_addr, e);
                             break;
                         }
                     }
@@ -162,7 +165,8 @@ async fn handle_input_connection(
     peer_addr: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let mut input_handler = InputHandler::new().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let input_owner = InputOwner::global();
+    input_owner.acquire(TransportType::Wifi);
     let host = RemoteScreenHost::global();
 
     let mut min_clock_offset: Option<i64> = None;
@@ -278,7 +282,7 @@ async fn handle_input_connection(
                                     let mut host_guard = host.lock().unwrap();
                                     host_guard.handle_stop_screen(peer_addr);
                                 }
-                                input_handler.release_all();
+                                input_owner.release_all(TransportType::Wifi);
                                 let resp = serde_json::json!({ "event": "STOP_SCREEN_OK" }).to_string();
                                 let _ = ws_sender.send(Message::Text(resp.into())).await;
                                 continue;
@@ -390,7 +394,7 @@ async fn handle_input_connection(
                                     Ok(other) => {
                                         if accum_dx != 0.0 || accum_dy != 0.0 {
                                             move_applied_count += 1;
-                                            input_handler.handle_event(PouseEvent::Move { dx: accum_dx, dy: accum_dy, t: None });
+                                            input_owner.handle_event(TransportType::Wifi, Some(&peer_addr), PouseEvent::Move { dx: accum_dx, dy: accum_dy, t: None });
                                             accum_dx = 0.0;
                                             accum_dy = 0.0;
                                         }
@@ -401,7 +405,7 @@ async fn handle_input_connection(
                                             if !matches!(other, PouseEvent::Move { .. }) {
                                                 println!("[{}] Processing event: {:?}", peer_addr, other);
                                             }
-                                            input_handler.handle_event(other);
+                                            input_owner.handle_event(TransportType::Wifi, Some(&peer_addr), other);
                                         }
                                         break;
                                     }
@@ -414,7 +418,7 @@ async fn handle_input_connection(
 
                             if accum_dx != 0.0 || accum_dy != 0.0 {
                                 move_applied_count += 1;
-                                input_handler.handle_event(PouseEvent::Move { dx: accum_dx, dy: accum_dy, t: None });
+                                input_owner.handle_event(TransportType::Wifi, Some(&peer_addr), PouseEvent::Move { dx: accum_dx, dy: accum_dy, t: None });
                             }
 
                             if last_diag_log.elapsed().as_secs() >= 1 || batch_queue_len > 2 {
@@ -426,7 +430,7 @@ async fn handle_input_connection(
                             }
                         } else {
                             println!("[{}] Processing event: {:?}", peer_addr, event);
-                            input_handler.handle_event(event);
+                            input_owner.handle_event(TransportType::Wifi, Some(&peer_addr), event);
                         }
                     }
                     Err(err) => {
@@ -441,14 +445,16 @@ async fn handle_input_connection(
                 break;
             }
             Err(e) => {
-                eprintln!("WebSocket error: {}", e);
+                // Abrupt disconnects (TCP reset, connection aborted) are normal when
+                // the phone app is backgrounded or the network drops. Log at info level.
+                println!("[WS] Peer {} disconnected abruptly: {}", peer_addr, e);
                 break;
             }
             _ => {}
         }
     }
 
-    input_handler.release_all();
+    input_owner.release(TransportType::Wifi);
 
     let entered_grace_period = {
         let mut host_guard = host.lock().unwrap();
