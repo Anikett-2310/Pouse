@@ -110,7 +110,7 @@ describe('CLI Argument Parser & Dispatcher', () => {
       adapter: mockAdapter,
     });
     assert.equal(code, 0);
-    assert.ok(logs.some((l) => l.includes('pouse-cli v1.0.0')));
+    assert.ok(logs.some((l) => l.includes('pouse-cli v1.0.1')));
     assert.ok(logs.some((l) => l.includes('Pouse Desktop: v1.0.0')));
   });
 
