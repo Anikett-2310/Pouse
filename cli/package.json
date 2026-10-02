@@ -1,0 +1,32 @@
+{
+  "name": "pouse-cli",
+  "version": "1.0.0",
+  "description": "Official cross-platform CLI for installing and managing Pouse desktop client",
+  "type": "module",
+  "bin": {
+    "pouse": "./bin/pouse.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  },
+  "keywords": [
+    "pouse",
+    "cli",
+    "installer",
+    "desktop",
+    "remote-mouse",
+    "remote-screen"
+  ],
+  "author": "Aniket Tiwari",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

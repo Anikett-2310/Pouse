@@ -29,3 +29,9 @@ key.properties
 *.msi
 *.aab
 *.apk
+
+# Secrets / local environment
+.env
+.env.*
+!.env.example
+
