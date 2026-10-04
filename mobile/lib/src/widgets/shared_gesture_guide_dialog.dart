@@ -65,7 +65,7 @@ class _PouseTourModalState extends State<PouseTourModal> {
         (
           icon: Icons.laptop_windows,
           title: 'Download Pouse PC Client',
-          description: 'Get the official Windows client at https://pouse.app/download and run it on your PC.',
+          description: 'Get the official Windows client at https://pouse-webs.vercel.app/download and run it on your PC.',
         ),
         (
           icon: Icons.qr_code_scanner,
@@ -280,7 +280,7 @@ class _PouseTourModalState extends State<PouseTourModal> {
         (
           icon: Icons.support,
           title: 'Download & Documentation',
-          description: 'Visit https://pouse.app/download anytime to update your PC client or view support guides.',
+          description: 'Visit https://pouse-webs.vercel.app/download anytime to update your PC client or view support guides.',
         ),
       ],
     ),
