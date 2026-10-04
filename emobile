@@ -1,0 +1,35 @@
+warning: in the working copy of 'mobile/lib/src/utils/constants.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'mobile/lib/src/widgets/shared_gesture_guide_dialog.dart', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/mobile/lib/src/utils/constants.dart b/mobile/lib/src/utils/constants.dart[m
+[1mindex bb33bb3..62045b2 100644[m
+[1m--- a/mobile/lib/src/utils/constants.dart[m
+[1m+++ b/mobile/lib/src/utils/constants.dart[m
+[36m@@ -1,5 +1,5 @@[m
+ /// Global application-wide constants for Pouse.[m
+ class AppConstants {[m
+   /// Official download URL for the Pouse Windows PC Client.[m
+[31m-  static const String pcClientDownloadUrl = 'https://pouse.app/download';[m
+[32m+[m[32m  static const String pcClientDownloadUrl = 'https://pouse-webs.vercel.app/download';[m
+ }[m
+[1mdiff --git a/mobile/lib/src/widgets/shared_gesture_guide_dialog.dart b/mobile/lib/src/widgets/shared_gesture_guide_dialog.dart[m
+[1mindex 8b1b11f..ae31b1c 100644[m
+[1m--- a/mobile/lib/src/widgets/shared_gesture_guide_dialog.dart[m
+[1m+++ b/mobile/lib/src/widgets/shared_gesture_guide_dialog.dart[m
+[36m@@ -65,7 +65,7 @@[m [mclass _PouseTourModalState extends State<PouseTourModal> {[m
+         ([m
+           icon: Icons.laptop_windows,[m
+           title: 'Download Pouse PC Client',[m
+[31m-          description: 'Get the official Windows client at https://pouse.app/download and run it on your PC.',[m
+[32m+[m[32m          description: 'Get the official Windows client at https://pouse-webs.vercel.app/download and run it on your PC.',[m
+         ),[m
+         ([m
+           icon: Icons.qr_code_scanner,[m
+[36m@@ -280,7 +280,7 @@[m [mclass _PouseTourModalState extends State<PouseTourModal> {[m
+         ([m
+           icon: Icons.support,[m
+           title: 'Download & Documentation',[m
+[31m-          description: 'Visit https://pouse.app/download anytime to update your PC client or view support guides.',[m
+[32m+[m[32m          description: 'Visit https://pouse-webs.vercel.app/download anytime to update your PC client or view support guides.',[m
+         ),[m
+       ],[m
+     ),[m
